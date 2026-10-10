@@ -33,6 +33,7 @@ def decode(payload):
 class Subscriber:
     def __init__(self,app):
         self.app=app;self.stop=threading.Event();self.connected=False
+        self.pending_subscriptions={};self.authorized_topics=set()
         with app.app_context():
             cfg=settings()
             if not cfg['devices']:raise ValueError('MANDALAY_DEVICE_IDS is required')
@@ -40,6 +41,7 @@ class Subscriber:
             self.devices=cfg['devices']
         self.host=os.getenv('MQTT_HOST','');self.port=int(os.getenv('MQTT_PORT','8883'))
         if not self.host:raise ValueError('MQTT_HOST is required; no public-broker default is selected')
+        if not 1<=self.port<=65535:raise ValueError('MQTT_PORT must be 1–65535')
         if self.host.lower().rstrip('.')=='broker.hivemq.com':raise ValueError('The shared public HiveMQ broker is not accepted as authenticated device transport')
         template=os.getenv('MQTT_TOPIC_TEMPLATE','aqi/{device_id}/readings')
         if any(c in template for c in ('#','+')):raise ValueError('Only exact device topics are allowed')
@@ -48,6 +50,9 @@ class Subscriber:
         self.client=mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,client_id=os.getenv('MQTT_CLIENT_ID','mandalay-dashboard-subscriber'),
                                 clean_session=False,manual_ack=True)
         username=os.getenv('MQTT_USERNAME');password=os.getenv('MQTT_PASSWORD')
+        expected_username=os.getenv('MQTT_EXPECTED_USERNAME')
+        if expected_username and username!=expected_username:
+            raise ValueError('MQTT_USERNAME must match the configured subscriber account MQTT_EXPECTED_USERNAME')
         cert=os.getenv('MQTT_CLIENT_CERT');key=os.getenv('MQTT_CLIENT_KEY')
         insecure=os.getenv('MQTT_ALLOW_INSECURE_DEV')=='true'
         if insecure:
@@ -61,6 +66,7 @@ class Subscriber:
         if username and password:self.client.username_pw_set(username,password)
         self.client.reconnect_delay_set(min_delay=1,max_delay=60)
         self.client.on_connect=self.on_connect;self.client.on_disconnect=self.on_disconnect;self.client.on_message=self.on_message
+        self.client.on_subscribe=self.on_subscribe;self.client.on_connect_fail=self.on_connect_fail
 
     def save_state(self):
         with self.app.app_context():
@@ -68,18 +74,43 @@ class Subscriber:
             db.session.execute(stmt.on_conflict_do_update(index_elements=['name'],set_={'connected':stmt.excluded.connected,'heartbeat_at':stmt.excluded.heartbeat_at}))
             db.session.commit()
 
-    def on_connect(self,client,userdata,flags,reason_code,properties):
-        self.connected=reason_code==0
-        if self.connected:
-            for topic in self.topics:client.subscribe(topic,qos=1)
+    def persist_state(self):
         try:self.save_state()
-        except Exception:log.error('Could not persist broker connection state')
-        log.info('MQTT connection state: %s',self.connected)
+        except Exception:log.error('Could not persist MQTT connection/subscription state')
+
+    def on_connect(self,client,userdata,flags,reason_code,properties):
+        self.connected=False;self.pending_subscriptions.clear();self.authorized_topics.clear()
+        if reason_code==0:
+            for topic in self.topics:
+                result,mid=client.subscribe(topic,qos=1)
+                if result==mqtt.MQTT_ERR_SUCCESS:self.pending_subscriptions[mid]=topic
+                else:log.error('Could not send MQTT subscribe request; reconnect or check broker limits')
+            log.info('MQTT transport authenticated; waiting for subscription authorization')
+        else:
+            log.error('MQTT connection refused (%s); verify subscriber credentials and deployment access',reason_code)
+        self.persist_state()
+
+    def on_subscribe(self,client,userdata,mid,reason_codes,properties):
+        topic=self.pending_subscriptions.pop(mid,None)
+        if topic is None:return
+        codes=[getattr(code,'value',code) for code in reason_codes]
+        if len(codes)!=1 or codes[0] not in (0,1):
+            self.authorized_topics.discard(topic)
+            log.error('MQTT subscription denied or unexpected grant; allow subscriber access to the exact device topic and restart worker')
+        else:
+            self.authorized_topics.add(topic)
+            log.info('MQTT subscription authorized for configured device topic (QoS %s)',codes[0])
+        self.connected=len(self.authorized_topics)==len(self.topics)
+        self.persist_state()
+
+    def on_connect_fail(self,client,userdata):
+        self.connected=False;self.authorized_topics.clear();self.pending_subscriptions.clear()
+        self.persist_state()
+        log.warning('MQTT connection attempt failed; checking hostname, TLS trust or reachability may be necessary; retrying with backoff')
 
     def on_disconnect(self,client,userdata,flags,reason_code,properties):
-        self.connected=False
-        try:self.save_state()
-        except Exception:log.error('Could not persist disconnect state')
+        self.connected=False;self.authorized_topics.clear();self.pending_subscriptions.clear()
+        self.persist_state()
         log.warning('MQTT disconnected; automatic backoff/reconnection enabled')
 
     def on_message(self,client,userdata,message):

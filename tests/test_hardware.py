@@ -191,6 +191,7 @@ def test_mqtt_secure_configuration_and_callbacks(hw_app,monkeypatch):
     monkeypatch.setenv('MQTT_HOST','broker.hivemq.com');monkeypatch.setenv('MQTT_ALLOW_INSECURE_DEV','true')
     with pytest.raises(ValueError):Subscriber(hw_app)
     monkeypatch.setenv('MQTT_HOST','127.0.0.1');fake=Mock();monkeypatch.setattr('mqtt_worker.mqtt.Client',Mock(return_value=fake))
+    fake.subscribe.return_value=(0,1)
     worker=Subscriber(hw_app);worker.on_connect(fake,None,None,0,None)
     assert fake.subscribe.call_args.args[0]=='aqi/mandalay-node1/readings'
     message=SimpleNamespace(payload=json.dumps(payload(datetime.now(timezone.utc))).encode(),topic='aqi/mandalay-node1/readings',retain=False,qos=1,mid=1)
@@ -306,3 +307,41 @@ def test_compiled_firmware_payload_through_worker_and_postgres(hw_app,monkeypatc
     assert live['carbon_monoxide']==(p['co_mg_m3'] if mode=='valid-co' else None)
     assert live['ammonia']==p['nh3_ug_m3']
     fake.ack.assert_not_called() # PubSubClient publishes QoS 0; no acknowledgment exists.
+
+
+@pytest.mark.parametrize('grant,ready',[(0,True),(1,True),(128,False)])
+def test_emqx_tls_account_and_subscription_authorization(hw_app,monkeypatch,grant,ready):
+    hw_app.config['MANDALAY_DEVICE_IDS']='node1';hw_app.config['HARDWARE_DEVICE_ID']='node1'
+    monkeypatch.setenv('MQTT_HOST','p0fb61ec.ala.asia-southeast1.emqxsl.com')
+    monkeypatch.setenv('MQTT_PORT','8883');monkeypatch.setenv('MQTT_USERNAME','mandalay_worker')
+    monkeypatch.setenv('MQTT_PASSWORD','test-only-not-real-password')
+    monkeypatch.setenv('MQTT_EXPECTED_USERNAME','mandalay_worker')
+    monkeypatch.delenv('MQTT_ALLOW_INSECURE_DEV',raising=False)
+    fake=Mock();fake.subscribe.return_value=(0,10)
+    monkeypatch.setattr('mqtt_worker.mqtt.Client',Mock(return_value=fake))
+    worker=Subscriber(hw_app)
+    assert worker.host=='p0fb61ec.ala.asia-southeast1.emqxsl.com' and worker.port==8883
+    fake.username_pw_set.assert_called_once_with('mandalay_worker','test-only-not-real-password')
+    context=fake.tls_set_context.call_args.args[0]
+    assert context.check_hostname and context.verify_mode.name=='CERT_REQUIRED'
+    assert context.minimum_version.name=='TLSv1_2'
+    fake.reconnect_delay_set.assert_called_once_with(min_delay=1,max_delay=60)
+    worker.on_connect(fake,None,None,0,None)
+    fake.subscribe.assert_called_once_with('aqi/node1/readings',qos=1)
+    assert not worker.connected
+    worker.on_subscribe(fake,None,10,[SimpleNamespace(value=grant)],None)
+    assert worker.connected is ready and db.session.get(MQTTState,'subscriber').connected is ready
+    worker.on_disconnect(fake,None,None,1,None)
+    assert not worker.connected and not worker.authorized_topics
+
+
+def test_emqx_worker_rejects_publisher_account_and_missing_password(hw_app,monkeypatch):
+    monkeypatch.setenv('MQTT_HOST','p0fb61ec.ala.asia-southeast1.emqxsl.com')
+    monkeypatch.setenv('MQTT_EXPECTED_USERNAME','mandalay_worker')
+    monkeypatch.setenv('MQTT_USERNAME','mandalay_esp32')
+    with pytest.raises(ValueError,match='subscriber account'):Subscriber(hw_app)
+    monkeypatch.setenv('MQTT_USERNAME','mandalay_worker')
+    monkeypatch.delenv('MQTT_PASSWORD',raising=False)
+    monkeypatch.delenv('MQTT_CLIENT_CERT',raising=False);monkeypatch.delenv('MQTT_CLIENT_KEY',raising=False)
+    monkeypatch.delenv('MQTT_ALLOW_INSECURE_DEV',raising=False)
+    with pytest.raises(ValueError,match='authenticated TLS'):Subscriber(hw_app)

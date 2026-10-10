@@ -24,7 +24,7 @@ export HARDWARE_STALE_SECONDS=1800
 On the worker also configure:
 
 ```sh
-export MQTT_HOST=YOUR_PRIVATE_BROKER_HOST
+export MQTT_HOST=p0fb61ec.ala.asia-southeast1.emqxsl.com
 export MQTT_PORT=8883
 export MQTT_TOPIC_TEMPLATE='aqi/{device_id}/readings'
 export MQTT_CLIENT_ID=mandalay-dashboard-subscriber
@@ -95,3 +95,5 @@ DASHBOARD_BASE_URL=http://127.0.0.1:5010 .venv/bin/python scripts/hardware_brows
 `render.yaml` adds a separate single-instance background worker and hardware migration to the existing web pre-deploy command. Existing database, hourly refresh and prediction URL remain. Web and worker must share the same Mandalay device/cadence/staleness settings and PostgreSQL connection. Set both device variables to `node1`, keep interval 900 and stale threshold 1800, configure the private broker secrets and topic, and update actual firmware transport before deployment. Never change existing prediction service environment/features to this monitoring calculator without a separately validated retraining task. No services were provisioned or deployed here.
 
 Modified: `app.py` (blueprint registration only), `static/app.js`, `templates/dashboard.html`, `render.yaml`, `requirements.txt`, `requirements.lock.txt`, `README.md`. Added: `hardware.py`, `combined_cpcb.py`, `mqtt_worker.py`, `tests/test_hardware.py`, `scripts/hardware_browser_smoke.py`, this document. The existing `scripts/browser_smoke.py` is updated to run the seven-pollutant checks. Firmware, workbook, legacy calculator/importers and prediction export code are unchanged.
+
+The user has now selected EMQX Cloud Serverless. See [exact EMQX authorization and Render setup](EMQX_RENDER_SETUP.md) for confirmed host, separate publisher/subscriber accounts and subscription-readiness semantics.

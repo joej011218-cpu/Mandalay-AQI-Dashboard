@@ -10,7 +10,7 @@ The original firmware pauses sampling after a window closes until publishing suc
 
 ## Transport and payload changes
 
-`WiFiClientSecure` verifies a supplied root CA and broker hostname, without `setInsecure`. The firmware waits for an NTP clock before TLS certificate verification. NTP uses `pool.ntp.org` and `time.google.com`. Credentials are passed to authenticated MQTT connect. Device ID remains `node1`; current topic remains `aqi/node1/readings`. The public broker `broker.hivemq.com` is rejected, matching the Python worker. No private broker has been created or selected by the user; hostname/credentials/CA are pending.
+`WiFiClientSecure` verifies a supplied root CA and broker hostname, without `setInsecure`. The firmware waits for an NTP clock before TLS certificate verification. NTP uses `pool.ntp.org` and `time.google.com`. Credentials are passed to authenticated MQTT connect. Device ID remains `node1`; current topic remains `aqi/node1/readings`. The public broker `broker.hivemq.com` is rejected, matching the Python worker. The user has now selected EMQX Cloud Serverless at `p0fb61ec.ala.asia-southeast1.emqxsl.com:8883`; private passwords and actual CA/connection validation remain pending. See [EMQX Render setup](../../docs/EMQX_RENDER_SETUP.md).
 
 Payload now has `device_id`, `city: Mandalay`, `temperature`, `co_mg_m3`, `nh3_ug_m3`, `co_ppm`, `co_ratio`, `co_range_valid`, `co_valid`, `nh3_ratio`, `nh3_valid` and `humidity`. Original gas diagnostics, counts and local alert label remain. Explicit mass units are added. Nonfinite numbers serialize as JSON null, with invalid flags. A failed DHT reading does not invalidate otherwise valid gas observations. No synthetic readings are published.
 
@@ -48,7 +48,7 @@ Environment names for option 2:
 ```text
 WIFI_SSID=<your network>
 WIFI_PASSWORD=<your WiFi password, or empty>
-MQTT_HOST=<your future HiveMQ Cloud hostname; no scheme or port>
+MQTT_HOST=p0fb61ec.ala.asia-southeast1.emqxsl.com
 MQTT_PORT=8883
 MQTT_USERNAME=<device publisher account>
 MQTT_PASSWORD=<device publisher secret>
@@ -79,7 +79,7 @@ MANDALAY_DEVICE_IDS=node1
 HARDWARE_DEVICE_ID=node1
 HARDWARE_SAMPLE_SECONDS=900
 HARDWARE_STALE_SECONDS=1800
-MQTT_HOST=<same future HiveMQ Cloud hostname>
+MQTT_HOST=p0fb61ec.ala.asia-southeast1.emqxsl.com
 MQTT_PORT=8883
 MQTT_USERNAME=<subscriber account>
 MQTT_PASSWORD=<subscriber secret>
@@ -93,7 +93,7 @@ Worker starts with `python mqtt_worker.py`, separately from Gunicorn. Broker ACL
 
 ## Remaining real-device steps
 
-1. Create your HiveMQ Cloud/private TLS broker and obtain its exact hostname, trusted CA, publisher and subscriber accounts/ACLs.
+1. Use your confirmed EMQX hostname and obtain its actual trusted CA, publisher (`mandalay_esp32`) and subscriber (`mandalay_worker`) passwords and required authorization rules.
 2. Configure firmware locally and matching Render environment settings; secrets are not included in this deliverable.
 3. Compile, inspect the PlatformIO output, and flash your board when ready. Check NTP synchronization and authenticated TLS connection via the serial monitor.
 4. Run the existing additive `flask --app wsgi migrate-hardware` before starting the worker. No new migration is introduced by this firmware task.

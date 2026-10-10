@@ -18,9 +18,9 @@ services:
           name: mandalay-aqi-db
           property: connectionString
       - key: MANDALAY_DEVICE_IDS
-        sync: false
+        value: node1
       - key: HARDWARE_DEVICE_ID
-        sync: false
+        value: node1
       - key: HARDWARE_SAMPLE_SECONDS
         value: "900"
       - key: HARDWARE_STALE_SECONDS
@@ -61,17 +61,19 @@ services:
           name: mandalay-aqi-db
           property: connectionString
       - key: MANDALAY_DEVICE_IDS
-        sync: false
+        value: node1
       - key: HARDWARE_DEVICE_ID
-        sync: false
+        value: node1
       - key: HARDWARE_SAMPLE_SECONDS
         value: "900"
       - key: HARDWARE_STALE_SECONDS
         value: "1800"
       - key: MQTT_HOST
-        sync: false
+        value: p0fb61ec.ala.asia-southeast1.emqxsl.com
       - key: MQTT_PORT
         value: "8883"
+      - key: MQTT_EXPECTED_USERNAME
+        value: mandalay_worker
       - key: MQTT_USERNAME
         sync: false
       - key: MQTT_PASSWORD
