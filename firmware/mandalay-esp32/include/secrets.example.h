@@ -2,8 +2,8 @@
 // Copy to secrets.h locally. Never commit the populated file.
 #define WIFI_SSID "YOUR_WIFI_SSID"
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD" // Empty is permitted for your existing open WiFi.
-#define MQTT_HOST "YOUR_PRIVATE_TLS_BROKER_HOST"
-#define MQTT_USERNAME "YOUR_DEVICE_PUBLISH_USERNAME"
+#define MQTT_HOST "p0fb61ec.ala.asia-southeast1.emqxsl.com"
+#define MQTT_USERNAME "YOUR_DEVICE_PUBLISH_USERNAME" // Use mandalay_esp32; worker account is separate.
 #define MQTT_PASSWORD "YOUR_DEVICE_PUBLISH_PASSWORD"
 #define MQTT_TLS_PORT 8883
 #define MQTT_PUBLISH_TOPIC "aqi/node1/readings"

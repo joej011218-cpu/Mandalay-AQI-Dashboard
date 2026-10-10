@@ -10,12 +10,24 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, current_app, jsonify, request
-from sqlalchemy import select, UniqueConstraint, Index, func, case, literal, text
+from sqlalchemy import select, UniqueConstraint, Index, func, case, literal, text, and_, or_
 from sqlalchemy.dialects.postgresql import insert, JSONB
 from app import db, Reading, TZ, CITY, LAT, LON, canonical_filter
 import combined_cpcb as combined
 
 UTC=timezone.utc
+
+
+class SyntheticObservationError(ValueError):
+    """Broker tests are never production hardware observations."""
+
+
+def production_observation_filter():
+    # Preserve any old test rows for audit while keeping them out of monitoring.
+    raw=HardwareObservation.original_payload
+    return and_(*(or_(~raw.has_key(flag),raw.contains({flag:False}))
+                  for flag in ('test','synthetic')))
+
 
 
 class HardwareObservation(db.Model):
@@ -74,6 +86,10 @@ def _numeric(payload,key,minimum=0,maximum=None):
 def validate_payload(payload,received_at=None,retained=False):
     received_at=received_at or datetime.now(UTC)
     if not isinstance(payload,dict):raise ValueError('Payload must be a JSON object')
+    for flag in ('test','synthetic'):
+        if flag in payload:
+            if not isinstance(payload[flag],bool):raise ValueError(f'{flag} must be a JSON boolean')
+            if payload[flag]:raise SyntheticObservationError('Synthetic/test MQTT messages are not hardware observations')
     cfg=settings();device=payload.get('device_id')
     if device not in cfg['devices']:raise ValueError('Unknown or unconfigured Mandalay device')
     city=payload.get('city',CITY)
@@ -138,7 +154,7 @@ def hardware_status(now=None):
     now=now or datetime.now(UTC);cfg=settings()
     row=None
     if cfg['primary']:
-        row=db.session.scalar(select(HardwareObservation).where(HardwareObservation.device_id==cfg['primary'],
+        row=db.session.scalar(select(HardwareObservation).where(production_observation_filter(),HardwareObservation.device_id==cfg['primary'],
             HardwareObservation.city==CITY,HardwareObservation.timestamp<=now).order_by(HardwareObservation.timestamp.desc()).limit(1))
     state=db.session.get(MQTTState,'subscriber')
     worker_fresh=state is not None and now-state.heartbeat_at<timedelta(seconds=90)
@@ -165,7 +181,7 @@ def hourly_hardware(start,end):
     shifted=HardwareObservation.timestamp-text("interval '1 microsecond'")
     slot=func.date_bin(literal(f"{cfg['cadence']} seconds").cast(db.Interval),shifted,
                       literal(datetime(2020,1,1,0,30,tzinfo=UTC)).cast(db.DateTime(timezone=True)))
-    conditions=(HardwareObservation.device_id==cfg['primary'],HardwareObservation.city==CITY,
+    conditions=(production_observation_filter(),HardwareObservation.device_id==cfg['primary'],HardwareObservation.city==CITY,
                 HardwareObservation.timestamp>start-timedelta(hours=1),HardwareObservation.timestamp<=end)
     slots=select(slot.label('slot'),func.avg(case((HardwareObservation.co_valid,HardwareObservation.co_mg_m3))).label('co'),
                  func.avg(case((HardwareObservation.nh3_valid,HardwareObservation.nh3_ug_m3))).label('nh3')).where(*conditions).group_by(slot).subquery()
@@ -259,7 +275,7 @@ def monitoring_alerts(days,now=None):
     # Raw warnings use actual saved hardware observations, not hourly means.
     if raw_limits:
         start=now-timedelta(days=days)
-        hw=db.session.scalars(select(HardwareObservation).where(HardwareObservation.device_id==settings()['primary'],
+        hw=db.session.scalars(select(HardwareObservation).where(production_observation_filter(),HardwareObservation.device_id==settings()['primary'],
             HardwareObservation.city==CITY,HardwareObservation.timestamp>=start,HardwareObservation.timestamp<=now)).all()
         for sample in hw:
             for p,key,valid in (('carbon_monoxide','co_mg_m3','co_valid'),('ammonia','nh3_ug_m3','nh3_valid')):
@@ -303,7 +319,7 @@ def register(app):
     @bp.get('/api/hardware/history')
     def hardware_history():
         limit=days();cfg=settings();now=datetime.now(UTC)
-        rows=db.session.scalars(select(HardwareObservation).where(HardwareObservation.device_id==cfg['primary'],HardwareObservation.city==CITY,
+        rows=db.session.scalars(select(HardwareObservation).where(production_observation_filter(),HardwareObservation.device_id==cfg['primary'],HardwareObservation.city==CITY,
             HardwareObservation.timestamp>=now-timedelta(days=limit),HardwareObservation.timestamp<=now).order_by(HardwareObservation.timestamp).limit(50001)).all()
         if len(rows)>50000:return jsonify(error='Raw history exceeds 50,000 rows; request a shorter period or hourly monitoring history'),413
         return jsonify(data=[serialize_hardware(r) for r in rows],**metadata())

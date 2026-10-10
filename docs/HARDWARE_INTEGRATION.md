@@ -97,3 +97,5 @@ DASHBOARD_BASE_URL=http://127.0.0.1:5010 .venv/bin/python scripts/hardware_brows
 Modified: `app.py` (blueprint registration only), `static/app.js`, `templates/dashboard.html`, `render.yaml`, `requirements.txt`, `requirements.lock.txt`, `README.md`. Added: `hardware.py`, `combined_cpcb.py`, `mqtt_worker.py`, `tests/test_hardware.py`, `scripts/hardware_browser_smoke.py`, this document. The existing `scripts/browser_smoke.py` is updated to run the seven-pollutant checks. Firmware, workbook, legacy calculator/importers and prediction export code are unchanged.
 
 The user has now selected EMQX Cloud Serverless. See [exact EMQX authorization and Render setup](EMQX_RENDER_SETUP.md) for confirmed host, separate publisher/subscriber accounts and subscription-readiness semantics.
+
+Synthetic broker messages are now explicitly rejected by shared ingestion validation (`test: true` / `synthetic: true`); previously stored marked test rows remain for audit but are excluded from all hardware monitoring queries. See the EMQX setup guide for the reported MQTTX test and real-board connection steps.

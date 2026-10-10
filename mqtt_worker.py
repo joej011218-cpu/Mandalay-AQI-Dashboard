@@ -12,7 +12,7 @@ import paho.mqtt.client as mqtt
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from app import create_app, db
-from hardware import settings, ingest, MQTTState, HardwareObservation
+from hardware import settings, ingest, MQTTState, HardwareObservation, SyntheticObservationError
 
 log=logging.getLogger('mandalay.mqtt')
 LEADER_LOCK=219588960892
@@ -118,6 +118,8 @@ class Subscriber:
             payload=decode(message.payload)
             if not isinstance(payload,dict) or self.topics.get(message.topic)!=payload.get('device_id'):raise ValueError('Device and authorized topic do not match')
             with self.app.app_context():ingest(payload,retained=bool(message.retain))
+        except SyntheticObservationError:
+            log.info('Rejected synthetic/test MQTT message; no hardware observation stored')
         except (ValueError,UnicodeError,json.JSONDecodeError):
             log.warning('Rejected invalid Mandalay sensor payload')
             # Poison messages should not retry forever; do not log their content.

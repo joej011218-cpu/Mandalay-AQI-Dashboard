@@ -345,3 +345,58 @@ def test_emqx_worker_rejects_publisher_account_and_missing_password(hw_app,monke
     monkeypatch.delenv('MQTT_CLIENT_CERT',raising=False);monkeypatch.delenv('MQTT_CLIENT_KEY',raising=False)
     monkeypatch.delenv('MQTT_ALLOW_INSECURE_DEV',raising=False)
     with pytest.raises(ValueError,match='authenticated TLS'):Subscriber(hw_app)
+
+
+@pytest.mark.parametrize('timing',['none','timestamp','message_id'])
+@pytest.mark.parametrize('qos',[0,1])
+def test_user_mqttx_test_message_never_becomes_hardware(hw_app,monkeypatch,caplog,timing,qos):
+    hw_app.config['MANDALAY_DEVICE_IDS']='node1';hw_app.config['HARDWARE_DEVICE_ID']='node1'
+    monkeypatch.setenv('MQTT_HOST','127.0.0.1');monkeypatch.setenv('MQTT_ALLOW_INSECURE_DEV','true')
+    fake=Mock();monkeypatch.setattr('mqtt_worker.mqtt.Client',Mock(return_value=fake))
+    worker=Subscriber(hw_app)
+    p=dict(device_id='node1',co_mg_m3=1.5,nh3_ug_m3=1050,temperature=28.0,humidity=43.0,test=True)
+    if timing=='timestamp':p['timestamp']=datetime.now(timezone.utc).isoformat()
+    if timing=='message_id':p['message_id']='mqttx-synthetic-1'
+    msg=SimpleNamespace(payload=json.dumps(p).encode(),topic='aqi/node1/readings',retain=True,qos=qos,mid=9)
+    with caplog.at_level('INFO',logger='mandalay.mqtt'):worker.on_message(fake,None,msg)
+    assert 'Rejected synthetic/test MQTT message' in caplog.text
+    assert db.session.query(HardwareObservation).count()==0
+    assert hw_app.test_client().get('/api/hardware/latest').json['data'] is None
+    assert hw_app.test_client().get('/api/hardware/status').json['data']['status']=='offline'
+    if qos:fake.ack.assert_called_once_with(9,1)
+    else:fake.ack.assert_not_called()
+    fake.disconnect.assert_not_called()
+
+
+@pytest.mark.parametrize('marker',[{'test':'true'},{'test':1},{'test':None},{'test':[]},{'synthetic':True}])
+def test_synthetic_markers_and_malformed_test_flags_rejected_directly(hw_app,marker):
+    with pytest.raises(ValueError):ingest(payload(datetime.now(timezone.utc),**marker))
+    assert db.session.query(HardwareObservation).count()==0
+
+
+def test_explicit_false_test_flag_allows_valid_real_payload(hw_app):
+    now=datetime.now(timezone.utc)
+    assert ingest(payload(now,test=False,synthetic=False),now)['inserted']
+    assert monitoring_latest(now)['ammonia']==1000
+
+
+@pytest.mark.parametrize('marker',[{'test':True},{'test':'true'},{'synthetic':True}])
+def test_preexisting_synthetic_rows_are_audit_only(hw_app,marker):
+    at=current_hour();model_history(at);sensor_history(at)
+    count=db.session.query(HardwareObservation).count()
+    # Simulate old persisted rows in disposable test DB; don't delete originals.
+    for row in db.session.scalars(select(HardwareObservation)):
+        row.original_payload={**row.original_payload,**marker}
+    db.session.commit()
+    client=hw_app.test_client()
+    assert client.get('/api/hardware/latest').json['data'] is None
+    assert client.get('/api/hardware/history?days=1').json['data']==[]
+    assert client.get('/api/hardware/status').json['data']['status']=='offline'
+    live=monitoring_latest(at)
+    assert live['carbon_monoxide'] is None and live['ammonia'] is None
+    assert all(r['carbon_monoxide'] is None and r['ammonia'] is None for r in client.get('/api/monitoring/history?days=1').json['data'])
+    stats=client.get('/api/monitoring/analytics?days=1').json['summary']
+    assert stats['carbon_monoxide']['count']==0 and stats['ammonia']['count']==0
+    events=client.get('/api/monitoring/alerts?days=1').json['data']
+    assert not any(e['source']=='ESP32' and e['alert_type'] in ('rolling-concentration','raw-concentration') for e in events)
+    assert db.session.query(HardwareObservation).count()==count

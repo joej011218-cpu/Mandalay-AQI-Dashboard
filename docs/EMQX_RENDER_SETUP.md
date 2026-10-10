@@ -14,6 +14,17 @@ Confirmed non-secret connection settings:
 
 No passwords are stored in source. Worker reads `MQTT_USERNAME` and `MQTT_PASSWORD` from its process environment. Render config sets `MQTT_EXPECTED_USERNAME=mandalay_worker`; startup refuses a different account. Host and port remain environment-driven. This task does not deploy, push, merge, flash a device, or create/change EMQX accounts/authorization rules.
 
+
+## Broker-test messages are not sensor observations
+
+The user reports that two MQTTX clients successfully published/subscribed on the EMQX deployment. This demonstrates that those accounts could exchange a message in that test; it does not establish ESP32 delivery, Python worker ingestion, calibration, or negative authorization restrictions. The test used synthetic values and `test: true`, not measurements.
+
+New messages with JSON boolean `test: true` or `synthetic: true` are explicitly rejected before hardware persistence, regardless of timestamp/message ID, retain flag or numeric validity. Supplied marker fields must be JSON booleans; strings, numbers and null are rejected. Marker fields may be absent for the real firmware or explicitly false; those messages must still pass the complete existing validation. A false/absent marker is not proof of physical provenance: keep test publishers separate and restrict authentication/topic permissions.
+
+Rejected tests generate only a sanitized worker log, never a new hardware row or online indication. QoS 1 test messages are deliberately acknowledged/discarded rather than retried forever; QoS 0 needs no acknowledgment. Existing stored rows carrying true or malformed test/synthetic markers remain in PostgreSQL for audit but are excluded from latest/history APIs, freshness, hourly means, CPCB AQI, analytics and alerts. No deletion or schema migration is needed. This filter does not retroactively identify unmarked synthetic records.
+
+The exact user MQTTX message lacked both a timestamp and message ID and would previously have failed timestamp validation; adding timing metadata could previously have allowed its test values. Explicit test rejection now closes that gap. Future manual MQTTX checks on the live topic must always set `test: true` and must not be mistaken for real sensor history. Prefer a separate test topic/deployment without dashboard subscription.
+
 ## Authentication and authorization requirements
 
 Account creation establishes authentication, not the required topic restrictions. In the EMQX deployment console, verify authentication is enabled for both accounts, then configure/check authorization for the exact topic. Use username-scoped rules rather than only client-ID rules:
@@ -131,4 +142,4 @@ Use the existing [firmware build/flash instructions](../firmware/mandalay-esp32/
 4. Use the EMQX test client/MQTT tooling privately to verify negative authorization cases: worker cannot publish; publisher cannot subscribe; neither account can use unrelated topics. Authentication with an incorrect password must fail. Do not write test sensor history to the production topic; test negative publish permissions on a separate test deployment/topic with no dashboard ingestion.
 5. Check reconnect after a controlled network interruption. Current PubSubClient firmware publishes at QoS 0: a successful send is not broker/database acknowledgment, and offline/power-loss delivery is not guaranteed. Subscriber QoS 1 cannot upgrade publisher QoS 0.
 
-Local verification: all 112 tests pass, including confirmed EMQX host/port, environment account guard, TLS certificate/hostname settings, reconnect backoff and accepted/denied subscription acknowledgments, plus existing ingestion/database/payload/CPCB/prediction navigation tests. No live broker login, certificate handshake, EMQX permission check or real ESP32 reception was performed. Those steps require private credentials, live network access and the actual deployment/device.
+Local verification: all 127 tests pass, including confirmed EMQX host/port, environment account guard, TLS certificate/hostname settings, reconnect backoff and accepted/denied subscription acknowledgments, plus existing ingestion/database/payload/CPCB/prediction navigation tests. The user reports successful MQTTX communication; this agent has not independently performed a live worker login, certificate handshake, EMQX permission check or real ESP32 reception. Those steps require private credentials, live network access and the actual deployment/device.

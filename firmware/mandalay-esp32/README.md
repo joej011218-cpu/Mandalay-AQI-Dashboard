@@ -101,3 +101,39 @@ Worker starts with `python mqtt_worker.py`, separately from Gunicorn. Broker ACL
 6. Verify disconnect/retry behavior and long-running sampling/calibration on the real board. Live connectivity has NOT been tested here.
 
 Prediction application/models, dashboard prediction navigation, modeled refresh and Vadodara were not modified. No automatic push, merge, deployment or flash was performed.
+
+
+## Connect the actual board to confirmed EMQX
+
+MQTTX communication was reported successful by the user using synthetic `test: true` values; real ESP32 reception is still unverified. Firmware TCP MQTT TLS uses **8883**, not the WSS port 8084. Device remains `node1`, topic `aqi/node1/readings`, publisher username `mandalay_esp32`. The worker uses its separate `mandalay_worker` account.
+
+Use `emqx.env.example` as a reference, not as a shell script. Set these non-secret variables in your local build terminal:
+
+```sh
+export MQTT_HOST='p0fb61ec.ala.asia-southeast1.emqxsl.com'
+export MQTT_PORT='8883'
+export MQTT_TOPIC='aqi/node1/readings'
+export MQTT_USERNAME='mandalay_esp32'
+```
+
+Set `WIFI_SSID`, `WIFI_PASSWORD` and `MQTT_CA_FILE` privately on your local machine. Obtain the actual trusted EMQX root CA from the deployment provider; do not insert an unrelated or invented certificate. In Bash you can enter the publisher password without putting its value in a command or shell history:
+
+```sh
+read -r -s -p 'EMQX publisher password: ' MQTT_PASSWORD
+export MQTT_PASSWORD
+```
+
+With those values exported, the existing PlatformIO pre-build step writes ignored `include/secrets.h`. Alternatively copy the updated `secrets.example.h`, fill its private values locally, and build without exported `MQTT_HOST` so the manually supplied header is preserved. The firmware template now contains the confirmed non-secret hostname; no password is embedded in committed files.
+
+From the dashboard root, using your isolated PlatformIO environment:
+
+```sh
+build/firmware-tools/bin/pio run -d firmware/mandalay-esp32
+# On your machine, only when ready to flash the attached ESP32:
+build/firmware-tools/bin/pio run -d firmware/mandalay-esp32 --target upload
+build/firmware-tools/bin/pio device monitor -d firmware/mandalay-esp32
+```
+
+No additional source change is needed in sensor equations or sampling. Observe NTP synchronization followed by authenticated TLS connection. The first averaged reading is sent after the existing 15-minute window. Start the configured Python worker separately, then inspect `/api/hardware/latest` for an actual new measurement and `/api/monitoring/latest` for source/validity. Preserve the firmware's MQ-7 range flag even when it makes CO unavailable for AQI. Broker tests must set `test: true`; the backend now rejects them and filters any legacy flagged rows out of monitoring. The real firmware does not set test markers.
+
+Full-board compilation, flashing and real-board message reception remain local/operator steps. The agent has not connected to the broker or received real measurements. Never commit generated `secrets.h`, passwords or flash binaries. Keep broker permissions restricted to the exact topic. No Prediction or Vadodara code changes are required.
