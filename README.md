@@ -72,7 +72,8 @@ Import and refresh acquire a PostgreSQL transaction advisory lock and rebuild CP
 | `GET /api/history?days=7` | Ordered Mandalay readings with CPCB results; `details=1` includes per-pollutant calculation details |
 | `GET /api/analytics?days=7` | CPCB/pollutant means, minima, maxima, valid counts and unavailable AQI count; no US AQI summary |
 | `GET /api/alerts?days=7` | CPCB AQI ≥201 and explicitly nonnumeric Severe-band warnings, with Mandalay health precautions |
-| `POST /api/refresh` | `Authorization: Bearer REFRESH_TOKEN`; validated Mandalay Open-Meteo ingestion and CPCB rebuild |
+| `POST /api/refresh` | `Authorization: Bearer REFRESH_TOKEN`; empty HTTP 202, background Mandalay Open-Meteo ingestion and CPCB rebuild |
+| `GET /api/refresh/status` | Same authentication; latest persisted refresh state, timestamps, imported count and sanitized error type |
 
 Periods support 1–366 days. All UI times use Asia/Yangon. Future readings are excluded from these endpoints. Staleness starts after three hours. A row with missing CPCB never falls back to raw US AQI. Empty alerts never establish safety. Means of stored AQI are descriptive, not a new regulatory AQI computation. Chart gaps are not interpolated.
 
@@ -134,3 +135,26 @@ The hardware integration on `feature/mandalay-hardware-integration` adds source-
 The actual supplied ESP32 firmware is now integrated in [firmware/mandalay-esp32](firmware/mandalay-esp32/README.md), preserving calibration and sampling while adding verified TLS and backend-compatible payloads. Real broker credentials and board validation remain pending.
 
 Confirmed EMQX Cloud Serverless settings and exact web/worker deployment steps are in [EMQX Render setup](docs/EMQX_RENDER_SETUP.md). Credentials remain environment-only; no deployment was performed.
+
+
+## Asynchronous authenticated refresh
+
+`POST /api/refresh` keeps the existing `REFRESH_TOKEN` / `Authorization: Bearer <token>` authentication and constant-time comparison. Accepted requests return **HTTP 202 with an empty body**, `Location: /api/refresh/status` and, when available, `X-Refresh-Job-ID`. Provider collection and CPCB processing happen in a daemon thread inside its own Flask application context. Sessions commit on success, roll back on failure and are removed at exit. Provider failures are reported by status rather than the accepted POST returning 502. If the database/schema or thread launch is unavailable before acceptance, POST returns 503 instead of pretending a job was accepted.
+
+A session-level PostgreSQL advisory lock is acquired before starting a thread and held through the entire refresh. Overlapping authenticated calls coalesce to empty 202 responses and do not create another worker. This coordinates different Gunicorn processes and the existing `flask --app wsgi refresh-data` scheduled CLI, which now skips an overlapping active refresh. Existing dataset transaction locks continue protecting atomic measurement/CPCB updates and imports. Locks are explicitly released before a connection returns to the pool, or its connection is invalidated on cleanup failure.
+
+An additive status table is required before using the new endpoint or scheduled CLI. Existing Render `init-db` pre-deploy creates it automatically; for a running database, apply only this idempotent migration:
+
+```sh
+flask --app wsgi migrate-refresh
+```
+
+This creates only `mandalay_refresh_state`, preserves historical and hardware records, and introduces no new dependencies, Render service or environment variable. The existing `REFRESH_TOKEN` value must remain private. In cron-job.org, use POST to `https://YOUR_MANDALAY_DASHBOARD/api/refresh`, body empty, and configure the Authorization header privately as `Bearer <your existing REFRESH_TOKEN>`. Do not put the token in the URL. Status checks use GET to the same dashboard's `/api/refresh/status` with the same Authorization header.
+
+The status JSON contains `data.status` (`idle`, `queued`, `running`, `succeeded`, `failed`, `interrupted`), `job_id`, `source`, `requested_at`, `started_at`, `finished_at`, `imported_rows` and `error`. Times use explicit UTC offsets. Idle has no job metadata. Success is reported after the database operation finishes; an accepted response alone is not completion. Errors are sanitized exception class names; token values, provider error bodies and connection strings are not logged. Start/completion/error logs include job ID, UTC time and imported count on success. Only the latest job is retained; a subsequent refresh replaces the previous status. Poll after submission and compare job IDs when available; this is not a per-request history or notification service.
+
+**Reliability limits:** no durable refresh queue already exists in this repository; the MQTT subscriber and Render cron are not refresh job queues. The accepted job lives in a daemon thread. Render redeploy/restart/scale-down, Gunicorn worker recycling or a process crash can terminate it without retrying, even after 202. PostgreSQL status survives; when a status check finds queued/running state with no live refresh lock, it marks the job `interrupted`. A later authenticated POST or scheduled CLI can try again. A partial refresh transaction rolls back, but a process dying after committing readings and before updating status can leave `interrupted` even though data was imported. Connection loss can also make completion status uncertain. This provides no exactly-once execution, guaranteed completion, automatic retry or deadline. Use a durable queue and dedicated refresh worker if those guarantees become necessary; do not treat daemon threads as durable Render jobs.
+
+HTTP returns after short PostgreSQL scheduling operations, without waiting for Open-Meteo or CPCB calculations; database connection latency is still possible. A running job occupies one lock connection plus its normal database session. Keep database/pool capacity sufficient. If the lock connection is lost, the database can release coordination; existing dataset transaction locks still serialize writes, but full-fetch coordination is not guaranteed across a database/network failure. Check failed/interrupted status and data freshness rather than assuming success. Changing `REFRESH_TOKEN` affects future requests, not an already accepted background job.
+
+Tests use a disposable PostgreSQL database and real daemon threads. They cover missing/wrong tokens and constant-time checks on both endpoints, immediate empty 202 while refresh is blocked, application context, committed success, rollback and redacted errors, separate app engines and another Python process contending for the PostgreSQL lock, CLI overlap, thread launch failure, interruption detection, idempotent migration and actual mocked-provider/CPCB processing. Prediction, Vadodara, firmware calibration, dashboard pages and other API contracts are unchanged.
