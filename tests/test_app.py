@@ -163,11 +163,11 @@ def test_severe_band_alert_is_explicitly_non_numeric(application):
 
 
 def test_prediction_requires_cpcb_target_confirmation(application,monkeypatch):
-    monkeypatch.setenv('PREDICTION_URL','https://mandalay-prediction.example/predict')
+    monkeypatch.setenv('PREDICTION_URL','https://mandalay-aqi-prediction.onrender.com/prediction.html')
     client=application.test_client()
-    assert b'href="https://mandalay-prediction.example/predict"' not in client.get('/').data
+    assert b'href="https://mandalay-aqi-prediction.onrender.com/prediction.html"' not in client.get('/').data
     monkeypatch.setenv('PREDICTION_AQI_STANDARD',VERSION)
-    assert b'href="https://mandalay-prediction.example/predict"' in client.get('/').data
+    assert b'href="https://mandalay-aqi-prediction.onrender.com/prediction.html"' in client.get('/').data
 
 
 def test_old_calculation_version_cannot_be_served_as_current(application):

@@ -222,7 +222,7 @@ def create_app(config=None):
     def page():
         prediction = os.getenv('PREDICTION_URL','')
         # A deployed URL alone does not establish the model's training target.
-        if (urlparse(prediction).scheme != 'https' or not urlparse(prediction).netloc
+        if (prediction != 'https://mandalay-aqi-prediction.onrender.com/prediction.html'
                 or os.getenv('PREDICTION_AQI_STANDARD') != VERSION):
             prediction = None
         return render_template('dashboard.html', prediction_url=prediction, calculation_version=VERSION)

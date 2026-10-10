@@ -20,9 +20,9 @@ services:
       - key: REFRESH_TOKEN
         generateValue: true
       - key: PREDICTION_URL
-        sync: false
+        value: https://mandalay-aqi-prediction.onrender.com/prediction.html
       - key: PREDICTION_AQI_STANDARD
-        sync: false
+        value: cpcb-2014-rolling-v1
       - key: PYTHON_VERSION
         value: 3.12.14
   - type: cron
