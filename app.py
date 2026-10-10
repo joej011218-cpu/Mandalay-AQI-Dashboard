@@ -205,7 +205,8 @@ def create_app(config=None):
     if config:
         app.config.update({k:v for k,v in config.items() if k != 'SQLALCHEMY_DATABASE_URI'})
     db.init_app(app)
-    from refresh_jobs import RefreshState, enqueue, status as refresh_status, cli_refresh
+    from refresh_jobs import (RefreshState, enqueue, status as refresh_status,
+                              cli_refresh, migration_connection, migrate_refresh_schema)
 
     @app.after_request
     def headers(response):
@@ -335,7 +336,8 @@ def create_app(config=None):
     @app.cli.command('init-db')
     def init_db():
         # Additive migration from the original app: readings remain unchanged.
-        db.create_all()
+        with migration_connection() as conn:
+            db.metadata.create_all(bind=conn)
 
     @app.cli.command('refresh-data')
     def refresh_data():
@@ -347,7 +349,7 @@ def create_app(config=None):
 
     @app.cli.command('migrate-refresh')
     def migrate_refresh():
-        RefreshState.__table__.create(db.engine, checkfirst=True)
+        migrate_refresh_schema()
         print('Additive Mandalay refresh status table is ready')
 
     @app.cli.command('recalculate-cpcb')

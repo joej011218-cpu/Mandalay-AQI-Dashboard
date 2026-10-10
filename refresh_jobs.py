@@ -3,14 +3,16 @@
 The status is durable, the daemon thread is not a durable job queue.
 """
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from threading import Thread
 from uuid import uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, update, text
 from sqlalchemy.dialects.postgresql import insert
 import app as dashboard
 
 REFRESH_LOCK_ID = 219588960893  # Distinct from dataset and MQTT locks.
+SCHEMA_LOCK_ID = 219588960894  # Shared by additive init-db and refresh migration.
 STATE_KEY = 'mandalay'
 db = dashboard.db
 
@@ -30,6 +32,28 @@ class RefreshState(db.Model):
 
 def utcnow():
     return datetime.now(timezone.utc)
+
+
+@contextmanager
+def migration_connection():
+    """Serialize additive DDL across releases/processes; fail closed on timeout.
+
+    PostgreSQL transactional DDL and a transaction advisory lock ensure both
+    the schema change and lock are committed or rolled back together.
+    """
+    with db.engine.begin() as conn:
+        conn.execute(text("SET LOCAL lock_timeout = '30s'"))
+        conn.execute(text("SET LOCAL statement_timeout = '60s'"))
+        conn.execute(select(func.pg_advisory_xact_lock(SCHEMA_LOCK_ID)))
+        yield conn
+
+
+def migrate_refresh_schema():
+    with migration_connection() as conn:
+        RefreshState.__table__.create(conn, checkfirst=True)
+        # checkfirst does not repair a partially/incompatibly created table.
+        # Verify required columns are readable before allowing startup.
+        conn.execute(select(RefreshState.__table__).limit(0))
 
 
 def release(conn):

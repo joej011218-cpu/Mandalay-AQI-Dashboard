@@ -6,11 +6,12 @@ databases:
 services:
   - type: web
     name: mandalay-aqi-dashboard
+    branch: feature/mandalay-hardware-integration
     runtime: python
     plan: starter
     buildCommand: pip install -r requirements.lock.txt
-    preDeployCommand: flask --app wsgi init-db && flask --app wsgi recalculate-cpcb && flask --app wsgi migrate-hardware
-    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60 --access-logfile -
+    preDeployCommand: flask --app wsgi migrate-refresh && flask --app wsgi init-db && flask --app wsgi recalculate-cpcb && flask --app wsgi migrate-hardware
+    startCommand: bash scripts/start_web.sh
     healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
@@ -35,11 +36,12 @@ services:
         value: 3.12.14
   - type: cron
     name: mandalay-aqi-hourly
+    branch: feature/mandalay-hardware-integration
     runtime: python
     plan: starter
     schedule: "5 * * * *"
     buildCommand: pip install -r requirements.lock.txt
-    startCommand: flask --app wsgi refresh-data
+    startCommand: flask --app wsgi migrate-refresh && flask --app wsgi refresh-data
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -50,6 +52,7 @@ services:
 
   - type: worker
     name: mandalay-mqtt-ingestion
+    branch: feature/mandalay-hardware-integration
     runtime: python
     plan: starter
     numInstances: 1

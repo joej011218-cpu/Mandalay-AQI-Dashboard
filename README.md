@@ -143,13 +143,15 @@ Confirmed EMQX Cloud Serverless settings and exact web/worker deployment steps a
 
 A session-level PostgreSQL advisory lock is acquired before starting a thread and held through the entire refresh. Overlapping authenticated calls coalesce to empty 202 responses and do not create another worker. This coordinates different Gunicorn processes and the existing `flask --app wsgi refresh-data` scheduled CLI, which now skips an overlapping active refresh. Existing dataset transaction locks continue protecting atomic measurement/CPCB updates and imports. Locks are explicitly released before a connection returns to the pool, or its connection is invalidated on cleanup failure.
 
-An additive status table is required before using the new endpoint or scheduled CLI. Existing Render `init-db` pre-deploy creates it automatically; for a running database, apply only this idempotent migration:
+An additive status table is required before using the new endpoint or scheduled CLI. Render pre-deploy explicitly runs the migration. The web startup script also runs it before starting Gunicorn, including where Shell or pre-deploy is unavailable; cron runs it before refreshing. A shared PostgreSQL transaction advisory lock serializes `init-db` and `migrate-refresh` across processes. A failed migration prevents the new web process from listening. For a running database, apply only this idempotent migration:
 
 ```sh
 flask --app wsgi migrate-refresh
 ```
 
 This creates only `mandalay_refresh_state`, preserves historical and hardware records, and introduces no new dependencies, Render service or environment variable. The existing `REFRESH_TOKEN` value must remain private. In cron-job.org, use POST to `https://YOUR_MANDALAY_DASHBOARD/api/refresh`, body empty, and configure the Authorization header privately as `Bearer <your existing REFRESH_TOKEN>`. Do not put the token in the URL. Status checks use GET to the same dashboard's `/api/refresh/status` with the same Authorization header.
+
+See [deployment steps and migration safeguards](docs/REFRESH_DEPLOYMENT.md) before deploying an existing service. Preserve its existing database binding and token; do not provision a replacement empty database.
 
 The status JSON contains `data.status` (`idle`, `queued`, `running`, `succeeded`, `failed`, `interrupted`), `job_id`, `source`, `requested_at`, `started_at`, `finished_at`, `imported_rows` and `error`. Times use explicit UTC offsets. Idle has no job metadata. Success is reported after the database operation finishes; an accepted response alone is not completion. Errors are sanitized exception class names; token values, provider error bodies and connection strings are not logged. Start/completion/error logs include job ID, UTC time and imported count on success. Only the latest job is retained; a subsequent refresh replaces the previous status. Poll after submission and compare job IDs when available; this is not a per-request history or notification service.
 
