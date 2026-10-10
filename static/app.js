@@ -80,6 +80,14 @@ function chart(
   caption = $("chart-caption"),
 ) {
   svg.replaceChildren();
+  let axis = svg.nextElementSibling;
+  if (!axis || !axis.classList.contains("chart-time-axis")) {
+    axis = document.createElement("div");
+    axis.className = "chart-time-axis";
+    axis.setAttribute("aria-label", "Observation times in Asia/Yangon");
+    svg.after(axis);
+  }
+  axis.replaceChildren();
   const points = rows.filter((r) => r[field] != null);
   if (!points.length) {
     caption.textContent = "No observations in this period.";
@@ -87,6 +95,16 @@ function chart(
   }
   const start = new Date(rows[0].timestamp).getTime(),
     end = new Date(rows.at(-1).timestamp).getTime();
+  const tickFormat = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Yangon", hour: "numeric", minute: "2-digit", hour12: true,
+  });
+  for (let i = 0; i < 5; i++) {
+    const row = rows[Math.round((i * (rows.length - 1)) / 4)];
+    const label = document.createElement("span");
+    label.textContent = tickFormat.format(new Date(row.timestamp)).toLowerCase();
+    label.title = time(row.timestamp);
+    axis.append(label);
+  }
   const max = Math.max(50, ...points.map((r) => r[field]));
   const x = (r) =>
     40 +

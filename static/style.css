@@ -473,3 +473,43 @@ summary {
   font-size: 12px;
   font-weight: 400;
 }
+
+/* HTML ticks keep chart times readable independently of SVG scaling. */
+.chart-time-axis {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 4.45% 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.cpcb-categories {
+  margin: 16px 0 24px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.cpcb-categories table { width: 100%; }
+.cpcb-categories th, .cpcb-categories td { padding: 14px 18px; }
+.cpcb-categories td:last-child { font-weight: 600; font-variant-numeric: tabular-nums; }
+.cpcb-category { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
+.cpcb-category::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--category-color);
+  border: 1px solid rgba(255,255,255,.3);
+}
+.cpcb-category.good { --category-color: #4E9F3D; }
+.cpcb-category.satisfactory { --category-color: #A8C43A; }
+.cpcb-category.moderate { --category-color: #E8C547; }
+.cpcb-category.poor { --category-color: #E8823C; }
+.cpcb-category.very-poor { --category-color: #D8453B; }
+.cpcb-category.severe { --category-color: #7A2A2A; }
+@media (max-width: 600px) {
+  .chart-time-axis span:nth-child(2), .chart-time-axis span:nth-child(4) { display: none; }
+  .cpcb-categories th, .cpcb-categories td { padding: 12px; }
+}
