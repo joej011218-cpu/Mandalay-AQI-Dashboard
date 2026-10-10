@@ -17,7 +17,7 @@ services:
         fromDatabase:
           name: mandalay-aqi-db
           property: connectionString
-      - key: REFRESH_TOKEN
+      - key: REFRESH_SECRET
         generateValue: true
       - key: PREDICTION_URL
         sync: false

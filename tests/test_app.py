@@ -98,13 +98,13 @@ def test_refresh_validates_units_coordinates_and_recalculates(application,monkey
     payload['latitude']=23
     with pytest.raises(ValueError):refresh()
     payload['latitude']=22
-    monkeypatch.setenv('REFRESH_TOKEN','test-token')
+    monkeypatch.setenv('REFRESH_SECRET','test-token')
     client=application.test_client()
     assert client.post('/api/refresh').status_code==401
-    assert client.post('/api/refresh',headers={'Authorization':'Bearer test-token'}).status_code==200
+    assert client.post('/api/refresh',headers={'X-Refresh-Secret':'test-token'}).status_code==200
     import requests
     fetch.side_effect=requests.Timeout()
-    assert client.post('/api/refresh',headers={'Authorization':'Bearer test-token'}).status_code==502
+    assert client.post('/api/refresh',headers={'X-Refresh-Secret':'test-token'}).status_code==502
 
 
 def test_import_preserves_originals_and_never_relabels_source_aqi(application,tmp_path):

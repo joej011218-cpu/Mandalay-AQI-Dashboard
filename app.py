@@ -2,6 +2,7 @@
 import hmac
 import math
 import os
+from threading import Lock
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -148,7 +149,24 @@ def upsert(rows, snapshots=None):
         raise
 
 
+_refresh_lock = Lock()
+
+
+class RefreshInProgress(RuntimeError):
+    pass
+
+
 def refresh():
+    """HTTP and CLI share this nonblocking per-process refresh guard."""
+    if not _refresh_lock.acquire(blocking=False):
+        raise RefreshInProgress('Refresh already in progress')
+    try:
+        return _refresh()
+    finally:
+        _refresh_lock.release()
+
+
+def _refresh():
     response = requests.get('https://air-quality-api.open-meteo.com/v1/air-quality', params={
         'latitude': LAT, 'longitude': LON, 'hourly': ','.join(FIELDS),
         'timezone': 'Asia/Yangon', 'past_days': 7, 'forecast_days': 1,
@@ -291,16 +309,23 @@ def create_app(config=None):
 
     @app.post('/api/refresh')
     def refresh_route():
-        token = os.getenv('REFRESH_TOKEN')
-        if not token:
-            return jsonify(error='Refresh is disabled until REFRESH_TOKEN is configured'), 503
-        if not hmac.compare_digest(request.headers.get('Authorization',''), 'Bearer '+token):
-            return jsonify(error='Unauthorized'), 401
+        secret = os.getenv('REFRESH_SECRET')
+        if not secret:
+            return jsonify(status='error', error='Refresh is not configured'), 503
+        supplied = request.headers.get('X-Refresh-Secret', '')
+        if not hmac.compare_digest(supplied.encode('utf-8'), secret.encode('utf-8')):
+            return jsonify(status='error', error='Unauthorized'), 401
         try:
-            return jsonify(imported=refresh(), **metadata())
+            return jsonify(status='success', imported=refresh(), **metadata())
+        except RefreshInProgress:
+            return jsonify(status='error', error='Refresh already in progress'), 409
         except (requests.RequestException, KeyError, ValueError, TypeError):
             db.session.rollback()
-            return jsonify(error='Air quality provider unavailable or returned invalid Mandalay data'), 502
+            return jsonify(status='error', error='Air quality provider unavailable or returned invalid Mandalay data'), 502
+        except Exception:
+            # Do not log exception text: provider/driver errors may contain secrets.
+            db.session.rollback()
+            return jsonify(status='error', error='Refresh failed; service temporarily unavailable'), 500
 
     @app.errorhandler(500)
     def internal_error(error):

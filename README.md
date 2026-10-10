@@ -17,7 +17,7 @@ flask --app wsgi refresh-data
 flask --app wsgi run --host 0.0.0.0 --port 5000
 ```
 
-Set `DATABASE_URL` securely. For remote PostgreSQL use TLS (`sslmode=require`). Configure `REFRESH_TOKEN` securely to enable authenticated `POST /api/refresh`; it is never needed in browser code. Trusted schedulers use the CLI instead.
+Set `DATABASE_URL` securely. For remote PostgreSQL use TLS (`sslmode=require`). Configure `REFRESH_SECRET` securely to enable authenticated `POST /api/refresh`; it is never needed in browser code. Trusted schedulers use the CLI instead.
 
 The upgrade is additive: `init-db` creates `mandalay_cpcb_aqi` and `mandalay_source_observations` without modifying existing `mandalay_readings`. `recalculate-cpcb` populates derived results, including explicit missing statuses. Existing raw `us_aqi` values remain unchanged. Legacy UTC-request data is retained for audit but excluded from the canonical Yangon whole-hour timeline. Future schema changes need explicit migrations; `create_all` does not alter existing columns.
 
@@ -72,7 +72,7 @@ Import and refresh acquire a PostgreSQL transaction advisory lock and rebuild CP
 | `GET /api/history?days=7` | Ordered Mandalay readings with CPCB results; `details=1` includes per-pollutant calculation details |
 | `GET /api/analytics?days=7` | CPCB/pollutant means, minima, maxima, valid counts and unavailable AQI count; no US AQI summary |
 | `GET /api/alerts?days=7` | CPCB AQI ≥201 and explicitly nonnumeric Severe-band warnings, with Mandalay health precautions |
-| `POST /api/refresh` | `Authorization: Bearer REFRESH_TOKEN`; validated Mandalay Open-Meteo ingestion and CPCB rebuild |
+| `POST /api/refresh` | `X-Refresh-Secret: REFRESH_SECRET`; validated Mandalay Open-Meteo ingestion and CPCB rebuild |
 
 Periods support 1–366 days. All UI times use Asia/Yangon. Future readings are excluded from these endpoints. Staleness starts after three hours. A row with missing CPCB never falls back to raw US AQI. Empty alerts never establish safety. Means of stored AQI are descriptive, not a new regulatory AQI computation. Chart gaps are not interpolated.
 
@@ -126,3 +126,5 @@ The current isolated cloud instance retains PostgreSQL 17 under `/workspace/mand
 ## Remaining data limitations
 
 The workbook covers only part of 2026, has no NH3/Pb or instrument QA flags, and does not itself document timezone, PM units or station provenance. Provider overlap supports the chosen interpretations but does not certify ground measurements. The first 15 rows lack enough history; later missing data can also prevent eligibility. Eight-of-eight CO/O3 completeness is conservative. Severe bands cannot receive reliable numerical interpolation without an authoritative finite endpoint. The separately deployed CPCB prediction model and URL remain unavailable.
+
+Hourly HTTP scheduling: see [cron-job.org setup](docs/HTTP_REFRESH.md). The previous bearer-token authentication is replaced by the secret header.
