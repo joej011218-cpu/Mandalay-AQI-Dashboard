@@ -320,4 +320,6 @@ def create_app(config=None):
     def recalculate_cpcb():
         print(f'Recalculated {recalculate()} canonical Mandalay CPCB results')
 
+    from hardware import register
+    register(app)
     return app

@@ -126,3 +126,7 @@ The current isolated cloud instance retains PostgreSQL 17 under `/workspace/mand
 ## Remaining data limitations
 
 The workbook covers only part of 2026, has no NH3/Pb or instrument QA flags, and does not itself document timezone, PM units or station provenance. Provider overlap supports the chosen interpretations but does not certify ground measurements. The first 15 rows lack enough history; later missing data can also prevent eligibility. Eight-of-eight CO/O3 completeness is conservative. Severe bands cannot receive reliable numerical interpolation without an authoritative finite endpoint. The separately deployed CPCB prediction model and URL remain unavailable.
+
+## ESP32 CO/NH3 monitoring integration
+
+The hardware integration on `feature/mandalay-hardware-integration` adds source-isolated provisional CPCB monitoring, PostgreSQL sensor history and a separate authenticated TLS MQTT worker. CO/NH3 never fall back to modeled values in the monitoring pages. Existing prediction navigation and modeled-data pipeline remain unchanged. See [hardware integration setup, coverage, testing and Render configuration](docs/HARDWARE_INTEGRATION.md). No firmware or live broker connection was verified; public HiveMQ plaintext settings require migration before production ingestion.

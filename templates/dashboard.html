@@ -36,21 +36,21 @@
             <strong id="aqi">—</strong>
             <h2 id="category">Awaiting data</h2>
             <p id="guidance">Health guidance appears when AQI is available.</p>
-            <p id="updated">No observation loaded</p>
+            <p id="updated">No observation loaded</p><p id="hardware-status" role="status">ESP32: checking status</p>
             <p id="aqi-reasons" role="status"></p>
           </div>
           <div class="hero-detail">
             <p>
-              Data source: <strong>Open-Meteo CAMS Global</strong
+              Data sources: <strong>Open-Meteo CAMS + ESP32 MQ estimates</strong
               ><br />Location: <strong>Mandalay, Myanmar</strong
-              ><br />Pollutants: PM₂.₅, PM₁₀, NO₂, SO₂, CO, O₃<br />Dominant
+              ><br />Pollutants: PM₂.₅, PM₁₀, NO₂, SO₂, O₃ + hardware CO, NH₃<br />Dominant
               pollutant: <strong id="dominant">Unavailable</strong><br /><span
                 id="eligibility"
                 >Checking completeness</span
               >
             </p>
             <p>
-              CPCB AQI · hourly rolling · modeled air quality<br />21.9588° N ·
+              CPCB AQI · hourly rolling · provisional mixed sources<br />21.9588° N ·
               96.0891° E
             </p>
           </div>
@@ -78,7 +78,8 @@
             At least 16 valid hours per pollutant in the last 24 hours; CO/O₃
             also require all eight recent hours. At least three eligible
             pollutants, including PM₂.₅ or PM₁₀. Raw pollutant cards above show
-            current hourly µg/m³; CO mean used in its sub-index is mg/m³.
+            source-specific measurements: ESP32 CO in mg/m³ and NH₃ in µg/m³;
+            Open-Meteo pollutants in µg/m³. Hardware hourly means require sampling coverage.
           </p>
         </details>
       </section>
@@ -95,7 +96,7 @@
               <option value="7" selected>7 days</option>
               <option value="30">30 days</option>
               <option value="366">1 year</option>
-            </select></label
+            </select><select id="view" aria-label="Aggregation view"><option value="hourly">Hourly</option><option value="daily">Daily means</option></select></label
           >
         </div>
         <div class="chart-box">
@@ -110,10 +111,10 @@
       </section>
       <section id="analytics" hidden>
         <div id="pollutant-charts" class="chart-grid"></div>
-        <h2>Period statistics</h2>
+        <h2>Period statistics · hourly records</h2>
         <div id="stats" class="cards"></div>
         <p>
-          Arithmetic hourly mean, minimum and maximum. A mean AQI is
+          Charts support hourly or daily means; statistics summarize covered hourly records. A mean AQI is
           descriptive; it is not a new regulatory AQI calculation.
         </p>
       </section>
@@ -128,13 +129,7 @@
         <div class="panel table-wrap">
           <table>
             <thead>
-              <tr>
-                <th>Time · Asia/Yangon</th>
-                <th>AQI stage</th>
-                <th>CPCB AQI</th>
-                <th>Source</th>
-                <th>Mandalay health precautions</th>
-              </tr>
+<tr><th>Time · Asia/Yangon</th><th>Pollutant</th><th>Type / severity</th><th>Observed value</th><th>Threshold / period</th><th>Source</th><th>Health precautions / status</th></tr>
             </thead>
             <tbody id="alert-list"></tbody>
           </table>
@@ -151,16 +146,14 @@
             This dashboard serves Mandalay, Myanmar exclusively at latitude
             21.9588 and longitude 96.0891. All displayed times use Asia/Yangon.
           </p>
-          <h3>Data & methodology</h3>
+          <h3>Hardware monitoring</h3><p>CO comes exclusively from the ESP32 MQ-7 sensor (mg/m³), NH₃ from MQ-135 (µg/m³). These are low-cost estimates; calibration and live hardware connectivity remain unverified in this workspace. Missing or stale hardware is never replaced by Open-Meteo CO. The monitoring calculation requires covered hardware hours and is labeled partial when required source histories are missing. Predictions retain their existing modeled-data pipeline.</p><h3>Data & methodology</h3>
           <p>
-            Current pollutant data comes from Open-Meteo’s CAMS modeled air
-            quality product, rather than a local ground sensor. CPCB pollutant
+            PM₂.₅, PM₁₀, NO₂, SO₂ and O₃ come from Open-Meteo’s CAMS modeled
+            air quality product. CO and NH₃ come exclusively from ESP32 hardware. CPCB pollutant
             sub-indices are calculated independently using 24-hour means for
-            PM₂.₅, PM₁₀, NO₂ and SO₂ and eight-hour means for CO and O₃. Overall
+            PM₂.₅, PM₁₀, NO₂, SO₂ and NH₃ and eight-hour means for CO and O₃. Overall
             CPCB AQI is the maximum eligible sub-index; at least three
-            pollutants including one particulate pollutant are required. All raw
-            pollutant cards use µg/m³; the CO mean is converted to mg/m³ before
-            interpolation. Raw US AQI is preserved for audit and never used as
+            pollutants including one particulate pollutant are required. Hardware CO is displayed and averaged in mg/m³; other pollutant concentrations use µg/m³. Raw US AQI is preserved for audit and never used as
             CPCB AQI.
           </p>
           <p>
@@ -207,7 +200,7 @@
             </table>
           </div>
           <p>
-            The workbook has six pollutants and no NH₃ or Pb. At least 16/24
+            The modeled workbook has six pollutants and no measured hardware history; monitoring adds NH₃ from actual saved ESP32 observations. Pb remains unavailable. At least 16/24
             valid hours are required per pollutant; this application
             conservatively requires all eight recent CO/O₃ hours. The first 15
             historical hours are unavailable. Open-ended Severe concentration

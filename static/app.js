@@ -7,7 +7,11 @@ const names = {
   sulphur_dioxide: "SO₂",
   ozone: "O₃",
   carbon_monoxide: "CO",
+  ammonia: "NH₃",
 };
+const units = {carbon_monoxide:"mg/m³",ammonia:"µg/m³"};
+const source = p => ["carbon_monoxide","ammonia"].includes(p)?"ESP32":"Open-Meteo";
+const unit = p => units[p] || "µg/m³";
 let theme;
 try {
   theme = localStorage.getItem("theme");
@@ -88,23 +92,23 @@ function chart(
     svg.after(axis);
   }
   axis.replaceChildren();
+  if (!rows.length) {caption.textContent="No observations in this period.";return;}
   const points = rows.filter((r) => r[field] != null);
-  if (!points.length) {
-    caption.textContent = "No observations in this period.";
-    return;
-  }
+
   const start = new Date(rows[0].timestamp).getTime(),
     end = new Date(rows.at(-1).timestamp).getTime();
   const tickFormat = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Yangon", hour: "numeric", minute: "2-digit", hour12: true,
+    timeZone: "Asia/Yangon", month:"short",day:"numeric",hour: "numeric", minute: "2-digit", hour12: true,
   });
-  for (let i = 0; i < 5; i++) {
-    const row = rows[Math.round((i * (rows.length - 1)) / 4)];
+  const ticks=Math.min(5,rows.length);
+  for (let i = 0; i < ticks; i++) {
+    const row = rows[Math.round((i * (rows.length - 1)) / Math.max(1,ticks-1))];
     const label = document.createElement("span");
     label.textContent = tickFormat.format(new Date(row.timestamp)).toLowerCase();
     label.title = time(row.timestamp);
     axis.append(label);
   }
+  if (!points.length) {caption.textContent="No covered observations; gaps are not filled.";return;}
   const max = Math.max(50, ...points.map((r) => r[field]));
   const x = (r) =>
     40 +
@@ -136,7 +140,7 @@ function chart(
     }
     if (
       previous &&
-      new Date(r.timestamp) - new Date(previous.timestamp) <= 5400000
+      new Date(r.timestamp) - new Date(previous.timestamp) <= ($("view").value === "daily" ? 129600000 : 5400000)
     )
       add("line", {
         x1: x(previous),
@@ -160,7 +164,7 @@ function chart(
     dot.append(title);
     previous = r;
   }
-  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " (µg/m³)"} · ${points.length} hourly observations. Gaps are not interpolated.`;
+  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${$("view").value} observations. Gaps are not interpolated.`;
 }
 let loading = false;
 async function load() {
@@ -175,18 +179,19 @@ async function load() {
   try {
     const days = $("days").value;
     if (page === "/") {
-      const data = await api("/api/latest");
+      const data = await api("/api/monitoring/latest");
       const r = data.data;
       $("aqi").textContent = fmt(r.cpcb_aqi);
-      $("category").textContent = r.category;
+      $("category").textContent = r.category + " · " + r.aqi_label;
       document.querySelector(".hero").style.setProperty("--aqi-color", r.color);
       $("guidance").textContent = r.precautions;
       $("dominant").textContent = r.dominant_pollutants.length
         ? r.dominant_pollutants.map((p) => names[p] || p).join(", ")
         : "Unavailable";
       $("eligibility").textContent =
-        `${r.eligible_pollutants.length} eligible pollutants · ${r.status}`;
-      $("aqi-reasons").textContent = r.reasons.join("; ");
+        `${r.eligible_pollutants.length}/7 eligible pollutants · ${r.status} · ${r.coverage}`;
+      $("aqi-reasons").textContent = [...r.reasons,r.missing_pollutants.length?"Missing/insufficient: "+r.missing_pollutants.map(p=>names[p]).join(", "):""].filter(Boolean).join("; ");
+      $("hardware-status").textContent=`ESP32: ${r.hardware.status} · MQTT subscriber ${r.hardware.mqtt_connected?"connected":"disconnected/unverified"}`;
       $("calculation-details").replaceChildren();
       for (const [field, detail] of Object.entries(r.pollutant_details)) {
         const tr = document.createElement("tr");
@@ -206,32 +211,30 @@ async function load() {
         $("calculation-details").append(tr);
       }
       $("updated").textContent =
-        `${time(r.timestamp)} · ${r.source}${data.stale ? " · STALE" : ""}`;
+        `${time(r.timestamp)} · hourly rolling calculation · provisional mixed-source estimates`;
       $("pollutants").replaceChildren(
-        ...Object.entries(names).map(([k, n]) => card(n, fmt(r[k]), "µg/m³")),
+        ...Object.entries(names).map(([k, n]) => {const m=r.measurements[k];return card(n,fmt(m.value),`${m.unit} · ${m.source} · ${m.status}${m.timestamp?" · "+time(m.timestamp):" · no measurement"}`);}),
       );
-      $("status").textContent = data.stale
-        ? "Data is stale. Waiting for the next successful provider refresh."
-        : `Latest Mandalay observation · CPCB AQI ${r.status}`;
+      $("status").textContent = `Mandalay monitoring · ${r.aqi_label} · ${r.status}${r.model_stale?" · Open-Meteo stale/missing":""}`;
     }
     if (["/", "/analytics"].includes(page)) {
-      const h = await api(`/api/history?days=${days}`);
+      const h = await api(`/api/monitoring/history?days=${days}&view=${$("view").value}`);
       chart(h.data);
       if (page === "/analytics") {
-        const a = await api(`/api/analytics?days=${days}`);
+        const a = await api(`/api/monitoring/analytics?days=${days}`);
         const v = a.summary.cpcb_aqi;
         $("overview-cards").replaceChildren(
           card("Average AQI", fmt(v.mean), "Selected period"),
           card("Peak AQI", fmt(v.max), "Selected period"),
           card("Best AQI", fmt(v.min), "Selected period"),
-          card("AQI readings", String(v.count), "Stored hourly records"),
+          card("AQI readings", String(v.count), "Eligible calculated hours"),
         );
         $("pollutant-charts").replaceChildren();
         for (const [field, label] of Object.entries(names)) {
           const box = document.createElement("div");
           box.className = "chart-box";
           const title = document.createElement("h3");
-          title.textContent = label + " (µg/m³)";
+          title.textContent = label + " ("+unit(field)+") · "+source(field);
           const svg = document.createElementNS(
             "http://www.w3.org/2000/svg",
             "svg",
@@ -250,7 +253,7 @@ async function load() {
         $("stats").replaceChildren(
           ...Object.entries(a.summary).map(([k, v]) =>
             card(
-              names[k] ? `${names[k]} (µg/m³)` : "CPCB AQI",
+              names[k] ? `${names[k]} (${unit(k)}) · ${source(k)}` : "CPCB AQI",
               fmt(v.mean),
               `Min ${fmt(v.min)} · Max ${fmt(v.max)} · ${v.count} readings`,
             ),
@@ -261,55 +264,21 @@ async function load() {
       }
     }
     if (page === "/alerts") {
-      const a = await api("/api/alerts?days=7");
-      const current = await api("/api/latest").catch(() => null);
-      const numeric = a.data.filter((r) => r.cpcb_aqi != null);
-      const peak = numeric.length
-        ? Math.max(...numeric.map((r) => r.cpcb_aqi))
-        : null;
-      $("overview-cards").replaceChildren(
-        card(
-          "Current AQI",
-          fmt(current?.data?.cpcb_aqi),
-          current?.stale
-            ? "Stale observation"
-            : current?.data?.category || "Unavailable",
-        ),
-        card(
-          "Stored alerts",
-          String(a.data.length),
-          "CPCB AQI ≥ 201 or Severe-band warning · 7 days",
-        ),
-        card("Highest alert AQI", fmt(peak), "Last seven days"),
-        card(
-          "Latest alert",
-          a.data[0]?.alert_type === "severe-band-warning"
-            ? "Severe band"
-            : fmt(a.data[0]?.cpcb_aqi),
-          a.data[0] ? time(a.data[0].timestamp) : "No alerts recorded",
-        ),
-      );
-      $("alert-list").replaceChildren();
+      const a = await api("/api/monitoring/alerts?days=7");
+      const current = await api("/api/monitoring/latest").catch(() => null);
+      const numeric=a.data.filter(r=>r.alert_type==='cpcb-aqi' && r.value!=null);
+      $('overview-cards').replaceChildren(card('Current CPCB',fmt(current?.data?.cpcb_aqi),current?.data?.aqi_label||'Unavailable'),card('Monitoring alerts',String(a.data.length),'Rolling, raw and sensor status'),card('Peak CPCB alert',numeric.length?fmt(Math.max(...numeric.map(r=>r.value))):'—','Provisional'),card('ESP32',current?.data?.hardware.status||'unavailable','Hardware CO/NH₃ only'));
+      $('alert-list').replaceChildren();
       for (const r of a.data) {
-        const tr = document.createElement("tr");
-        for (const value of [
-          time(r.timestamp),
-          r.category,
-          r.alert_type === "severe-band-warning"
-            ? "401–500 band · numeric unavailable"
-            : fmt(r.cpcb_aqi),
-          r.source,
-          r.message,
-        ]) {
-          const td = document.createElement("td");
-          td.textContent = value;
-          tr.append(td);
+        const tr=document.createElement('tr');tr.style.borderLeft=`4px solid ${r.color}`;
+        for (const value of [time(r.timestamp),names[r.pollutant]||r.pollutant||'AQI',r.alert_type+' · '+r.severity,fmt(r.value)+' '+r.unit,fmt(r.threshold)+' '+r.unit+(r.averaging_hours?' · '+r.averaging_hours+'h':''),r.source,r.message]) {
+          const td=document.createElement('td');td.textContent=value;tr.append(td);
         }
-        $("alert-list").append(tr);
+        $('alert-list').append(tr);
       }
       $("alert-empty").hidden = !!a.data.length;
       $("status").textContent =
-        `${a.data.length} recorded Mandalay alerts · ${a.unavailable_aqi_count} CPCB AQI unavailable in the last seven days`;
+        `${a.data.length} Mandalay monitoring alerts in the last seven days`;
     }
   } catch (e) {
     $("status").textContent = e.message;
@@ -319,5 +288,6 @@ async function load() {
   }
 }
 $("days").onchange = load;
+$("view").onchange = load;
 load();
 setInterval(load, 300000);
