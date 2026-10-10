@@ -31,8 +31,12 @@ with sync_playwright() as p:
             expect(page.locator('html')).to_have_attribute('data-theme', 'light')
         if route == '/analytics':
             expect(page.locator('#pollutant-charts svg')).to_have_count(6)
-            page.select_option('#days', '1')
-            expect(page.locator('#status')).to_have_text(re.compile(r'24 Mandalay observations'), timeout=15000)
+            with page.expect_response(lambda response: response.url == base + '/api/analytics?days=1') as period_response:
+                page.select_option('#days', '1')
+            summary = period_response.value.json()
+            assert summary['aqi_standard'].startswith('Indian CPCB AQI')
+            count = summary['observations']
+            expect(page.locator('#status')).to_have_text(re.compile(rf'^{count} Mandalay observations'), timeout=15000)
         page.screenshot(path='/tmp/mandalay-' + (route.strip('/') or 'live') + '.png', full_page=True)
     page.set_viewport_size({'width': 390, 'height': 844})
     page.goto(base + '/')
