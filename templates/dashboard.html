@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mandalay · Air Quality</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <script defer src="/static/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header class="topbar">
+        <h1 id="page-title">Mandalay Air Quality — Live</h1>
+        <div class="controls">
+          <span class="badge" id="clock">Asia/Yangon</span
+          ><button id="theme" type="button">Toggle light / dark</button>
+        </div>
+        <nav aria-label="Main navigation">
+          <a href="/">Live</a><a href="/analytics">Analytics</a
+          ><a href="/alerts">Alerts</a>{% if prediction_url %}<a
+            href="{{ prediction_url }}"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Prediction ↗</a
+          >{% else %}<span
+            title="Prediction requires a deployed URL and confirmed CPCB training methodology"
+            >Prediction ↗ · pending</span
+          >{% endif %}<a href="/about">About</a>
+        </nav>
+      </header>
+      <div id="status" role="status">Loading Mandalay observations…</div>
+      <section id="live">
+        <div class="hero">
+          <div>
+            <p>INDIAN CPCB AIR QUALITY INDEX</p>
+            <strong id="aqi">—</strong>
+            <h2 id="category">Awaiting data</h2>
+            <p id="guidance">Health guidance appears when AQI is available.</p>
+            <p id="updated">No observation loaded</p>
+            <p id="aqi-reasons" role="status"></p>
+          </div>
+          <div class="hero-detail">
+            <p>
+              Data source: <strong>Open-Meteo CAMS Global</strong
+              ><br />Location: <strong>Mandalay, Myanmar</strong
+              ><br />Pollutants: PM₂.₅, PM₁₀, NO₂, SO₂, CO, O₃<br />Dominant
+              pollutant: <strong id="dominant">Unavailable</strong><br /><span
+                id="eligibility"
+                >Checking completeness</span
+              >
+            </p>
+            <p>
+              CPCB AQI · hourly rolling · modeled air quality<br />21.9588° N ·
+              96.0891° E
+            </p>
+          </div>
+        </div>
+        <div id="pollutants" class="cards"></div>
+        <details class="panel calculation-panel">
+          <summary>CPCB averaging and pollutant eligibility</summary>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pollutant</th>
+                  <th>Period</th>
+                  <th>Valid hours</th>
+                  <th>Window mean</th>
+                  <th>Reported concentration used</th>
+                  <th>Sub-index</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="calculation-details"></tbody>
+            </table>
+          </div>
+          <p>
+            At least 16 valid hours per pollutant in the last 24 hours; CO/O₃
+            also require all eight recent hours. At least three eligible
+            pollutants, including PM₂.₅ or PM₁₀. Raw pollutant cards above show
+            current hourly µg/m³; CO mean used in its sub-index is mg/m³.
+          </p>
+        </details>
+      </section>
+      <section id="overview" hidden>
+        <div id="overview-cards" class="summary-grid"></div>
+      </section>
+      <section id="history">
+        <div class="section-head">
+          <h2>Air quality trends</h2>
+          <label
+            >Period
+            <select id="days">
+              <option value="1">24 hours</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+              <option value="366">1 year</option>
+            </select></label
+          >
+        </div>
+        <div class="chart-box">
+          <svg
+            id="chart"
+            viewBox="0 0 900 260"
+            role="img"
+            aria-label="Mandalay CPCB AQI over time"
+          ></svg>
+          <p id="chart-caption">No observations yet</p>
+        </div>
+      </section>
+      <section id="analytics" hidden>
+        <div id="pollutant-charts" class="chart-grid"></div>
+        <h2>Period statistics</h2>
+        <div id="stats" class="cards"></div>
+        <p>
+          Arithmetic hourly mean, minimum and maximum. A mean AQI is
+          descriptive; it is not a new regulatory AQI calculation.
+        </p>
+      </section>
+      <section id="alerts" hidden>
+        <h2>Air quality alerts</h2>
+        <p>
+          Alerts identify hourly CPCB AQI at or above 201 (Poor, Very Poor,
+          Severe). Identifiable open-ended Severe-band events are warnings with
+          numeric AQI unavailable. Missing AQI readings cannot establish safe
+          conditions.
+        </p>
+        <div class="panel table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time · Asia/Yangon</th>
+                <th>AQI stage</th>
+                <th>CPCB AQI</th>
+                <th>Source</th>
+                <th>Mandalay health precautions</th>
+              </tr>
+            </thead>
+            <tbody id="alert-list"></tbody>
+          </table>
+          <p id="alert-empty" hidden>
+            No recorded alerts in this period. Missing observations do not
+            establish safe conditions.
+          </p>
+        </div>
+      </section>
+      <section id="about" hidden>
+        <div class="panel">
+          <h2>Better information. Healthier choices.</h2>
+          <p>
+            This dashboard serves Mandalay, Myanmar exclusively at latitude
+            21.9588 and longitude 96.0891. All displayed times use Asia/Yangon.
+          </p>
+          <h3>Data & methodology</h3>
+          <p>
+            Current pollutant data comes from Open-Meteo’s CAMS modeled air
+            quality product, rather than a local ground sensor. CPCB pollutant
+            sub-indices are calculated independently using 24-hour means for
+            PM₂.₅, PM₁₀, NO₂ and SO₂ and eight-hour means for CO and O₃. Overall
+            CPCB AQI is the maximum eligible sub-index; at least three
+            pollutants including one particulate pollutant are required. All raw
+            pollutant cards use µg/m³; the CO mean is converted to mg/m³ before
+            interpolation. Raw US AQI is preserved for audit and never used as
+            CPCB AQI.
+          </p>
+          <p>
+            Historical records are imported from a verified Mandalay workbook.
+            Gaps remain visible. Observations older than three hours are marked
+            stale. This service supports planning and does not replace official
+            health advice.
+          </p>
+          <h3>CPCB categories</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>AQI range</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Good</td>
+                  <td>0–50</td>
+                </tr>
+                <tr>
+                  <td>Satisfactory</td>
+                  <td>51–100</td>
+                </tr>
+                <tr>
+                  <td>Moderate</td>
+                  <td>101–200</td>
+                </tr>
+                <tr>
+                  <td>Poor</td>
+                  <td>201–300</td>
+                </tr>
+                <tr>
+                  <td>Very Poor</td>
+                  <td>301–400</td>
+                </tr>
+                <tr>
+                  <td>Severe</td>
+                  <td>401–500</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            The workbook has six pollutants and no NH₃ or Pb. At least 16/24
+            valid hours are required per pollutant; this application
+            conservatively requires all eight recent CO/O₃ hours. The first 15
+            historical hours are unavailable. Open-ended Severe concentration
+            bands retain their warning but do not receive invented numeric
+            indices. These are hourly rolling values for Mandalay modeled data,
+            rather than official station measurements.
+          </p>
+          <h3>Prediction</h3>
+          <p>
+            The Prediction navigation entry connects to the separately deployed
+            Mandalay XGBoost service when its URL and CPCB methodology are
+            configured. The model must be trained on recalculated CPCB targets
+            using the same version ({{ calculation_version }}); an existing US
+            AQI model cannot be relabeled.
+          </p>
+        </div>
+      </section>
+      <footer class="bottom">
+        Mandalay AQI Dashboard · CPCB AQI · Open-Meteo / CAMS & verified
+        Mandalay history
+      </footer>
+    </main>
+  </body>
+</html>

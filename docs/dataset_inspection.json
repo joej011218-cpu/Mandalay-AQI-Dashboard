@@ -1,0 +1,76 @@
+{
+  "file": "mandalay_aqi_2026_hourly.xlsx",
+  "sha256": "a760a3d34e04e02b78cf412c936d285fd511cee333c4943a8858d2f4abedb62e",
+  "sheet": "Mandalay_AQI_2026",
+  "rows": 6768,
+  "headers": [
+    "timestamp",
+    "aqi",
+    "pm25",
+    "pm10",
+    "co_ug_m3",
+    "no2_ug_m3",
+    "so2_ug_m3",
+    "o3_ug_m3"
+  ],
+  "first_timestamp_wall_time": "2026-01-01T00:00:00",
+  "last_timestamp_wall_time": "2026-10-09T23:00:00",
+  "timestamp_cell_type": "Excel datetime without offset",
+  "interpreted_timezone": "Asia/Yangon",
+  "duplicate_timestamps": 0,
+  "non_hourly_intervals": 0,
+  "null_counts": {
+    "timestamp": 0,
+    "aqi": 0,
+    "pm25": 0,
+    "pm10": 0,
+    "co_ug_m3": 0,
+    "no2_ug_m3": 0,
+    "so2_ug_m3": 0,
+    "o3_ug_m3": 0
+  },
+  "ranges": {
+    "aqi": {
+      "min": 25,
+      "max": 188
+    },
+    "pm25": {
+      "min": 1.1,
+      "max": 129.5
+    },
+    "pm10": {
+      "min": 1.1,
+      "max": 136.9
+    },
+    "co_ug_m3": {
+      "min": 125,
+      "max": 2809
+    },
+    "no2_ug_m3": {
+      "min": 0,
+      "max": 51.3
+    },
+    "so2_ug_m3": {
+      "min": 0.9,
+      "max": 24.9
+    },
+    "o3_ug_m3": {
+      "min": 0,
+      "max": 205
+    }
+  },
+  "provider_overlap_check": {
+    "compared_hours": 168,
+    "all_seven_values_matched": 168,
+    "requested_coordinates": [21.9588, 96.0891],
+    "request_timezone": "Asia/Yangon",
+    "pm_units_inferred": "ug/m3",
+    "source_aqi_standard_inferred": "US EPA raw only"
+  },
+  "limitations": [
+    "No timezone, PM units, coordinates or instrument quality metadata in workbook; interpretations validated through provider overlap",
+    "No NH3 or Pb",
+    "Partial-year coverage",
+    "Modeled data, not certified station observations"
+  ]
+}
