@@ -277,3 +277,32 @@ def test_rejected_mqtt_city_does_not_persist_or_retry_forever(hw_app,monkeypatch
     assert db.session.query(HardwareObservation).count()==0
     fake.ack.assert_called_once_with(7,1)
     fake.disconnect.assert_not_called()
+
+
+from test_firmware import firmware_payload
+
+@pytest.mark.parametrize('mode',['default','valid-co','no-dht','nonfinite','no-clock'])
+def test_compiled_firmware_payload_through_worker_and_postgres(hw_app,monkeypatch,firmware_payload,mode):
+    hw_app.config['MANDALAY_DEVICE_IDS']='node1';hw_app.config['HARDWARE_DEVICE_ID']='node1'
+    monkeypatch.setenv('MQTT_HOST','127.0.0.1');monkeypatch.setenv('MQTT_ALLOW_INSECURE_DEV','true')
+    monkeypatch.setenv('MQTT_TOPIC_TEMPLATE','aqi/{device_id}/readings')
+    fake=Mock();monkeypatch.setattr('mqtt_worker.mqtt.Client',Mock(return_value=fake))
+    worker=Subscriber(hw_app)
+    stamp='' if mode=='no-clock' else datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    p=firmware_payload(stamp,mode)
+    msg=SimpleNamespace(payload=json.dumps(p).encode(),topic='aqi/node1/readings',retain=False,qos=0,mid=1)
+    worker.on_message(fake,None,msg);worker.on_message(fake,None,msg)
+    assert db.session.query(HardwareObservation).count()==1
+    row=db.session.scalar(select(HardwareObservation))
+    assert row.original_payload==p
+    assert row.nh3_ug_m3==p['nh3_ug_m3'] and row.co_mg_m3==p['co_mg_m3']
+    assert row.co_valid==(mode=='valid-co')
+    assert row.nh3_valid==(mode!='nonfinite')
+    assert row.timestamp_quality==('server_received' if mode=='no-clock' else 'measurement')
+    raw=hw_app.test_client().get('/api/hardware/latest').json['data']
+    assert raw['device_id']=='node1' and raw['co_mg_m3']==p['co_mg_m3']
+    assert raw['temperature']==p['temperature']
+    live=hw_app.test_client().get('/api/monitoring/latest').json['data']
+    assert live['carbon_monoxide']==(p['co_mg_m3'] if mode=='valid-co' else None)
+    assert live['ammonia']==p['nh3_ug_m3']
+    fake.ack.assert_not_called() # PubSubClient publishes QoS 0; no acknowledgment exists.

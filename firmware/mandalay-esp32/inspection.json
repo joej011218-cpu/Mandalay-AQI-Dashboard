@@ -1,0 +1,33 @@
+{
+  "uploaded_file": "main.cpp",
+  "uploaded_sha256": "80c8ae795b118b6a6e5ac21d0a1083666af4c9f764428e33929d2d06537256fb",
+  "preserved_sections": [
+    {
+      "start": "const unsigned long SAMPLE_INTERVAL_MS",
+      "end": "// MQ CIRCUIT",
+      "sha256": "ad733bafa933571fd34cc1dbe2234d41190cc42197354765a1d6f4cae51e3d42"
+    },
+    {
+      "start": "const float VC",
+      "end": "// STRUCTURES",
+      "sha256": "b8d12b06693afb4372896e47d97f17ed1fc372dedf9e18e6d09b5433731367f7"
+    },
+    {
+      "start": "AnalogReading readAnalogSensor",
+      "end": "void resetWindow()",
+      "sha256": "ba31d4c87834d8f0b070a7462533d38bae959155e0fbe5d13c6ded0f89728a02"
+    }
+  ],
+  "actual_sensor": "DHT22",
+  "sample_seconds": 10,
+  "adc_samples_per_observation": 20,
+  "window_seconds": 900,
+  "device_id": "node1",
+  "original_topic": "aqi/node1/readings",
+  "original_transport": "Unauthenticated MQTT over TCP port 1883",
+  "notes": [
+    "MQ-7 valid range is 10\u2013500 ppm; preserve co_range_valid.",
+    "Original node_id/temp changed to device_id/temperature.",
+    "Firmware calibration and regulatory suitability remain unverified."
+  ]
+}

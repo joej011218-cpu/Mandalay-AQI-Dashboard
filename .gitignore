@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local ESP32 WiFi/MQTT configuration and PlatformIO build products
+firmware/mandalay-esp32/include/secrets.h
+firmware/mandalay-esp32/.pio/

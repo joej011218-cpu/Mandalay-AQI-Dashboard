@@ -130,3 +130,5 @@ The workbook covers only part of 2026, has no NH3/Pb or instrument QA flags, and
 ## ESP32 CO/NH3 monitoring integration
 
 The hardware integration on `feature/mandalay-hardware-integration` adds source-isolated provisional CPCB monitoring, PostgreSQL sensor history and a separate authenticated TLS MQTT worker. CO/NH3 never fall back to modeled values in the monitoring pages. Existing prediction navigation and modeled-data pipeline remain unchanged. See [hardware integration setup, coverage, testing and Render configuration](docs/HARDWARE_INTEGRATION.md). No firmware or live broker connection was verified; public HiveMQ plaintext settings require migration before production ingestion.
+
+The actual supplied ESP32 firmware is now integrated in [firmware/mandalay-esp32](firmware/mandalay-esp32/README.md), preserving calibration and sampling while adding verified TLS and backend-compatible payloads. Real broker credentials and board validation remain pending.

@@ -1,6 +1,6 @@
 # Mandalay hardware monitoring integration
 
-Work is confined to `feature/mandalay-hardware-integration`. No push, merge or Render deployment was performed. No firmware, calibration code or local XGBoost models were found in the workspace. Backend compatibility is based on the documented JSON contract, not an inspected firmware file. Hardware connectivity, calibration and the external prediction service were not verified. Historical example sensor numbers were never inserted into the application database.
+Work is confined to `feature/mandalay-hardware-integration`. No push, merge or Render deployment was performed. At initial integration no firmware or local XGBoost models were available. The user subsequently supplied working `main.cpp`; its calibration and sampling were inspected and preserved in `firmware/mandalay-esp32`. See that folder’s README for the complete corrected firmware, actual-payload verification and remaining broker setup. Hardware connectivity, calibration and the external prediction service were not verified. Historical example sensor numbers were never inserted into the application database.
 
 ## Sources and compatibility
 
@@ -10,7 +10,7 @@ Existing `/api/latest`, `/api/history`, `/api/analytics`, `/api/alerts`, Open-Me
 
 ## Confirmed non-secret firmware settings
 
-The user reports `broker.hivemq.com:1883`, topic `aqi/node1/readings`, device `node1`, interval 900 seconds. The firmware source itself is absent. This shared public broker provides no authenticated device provenance and plaintext port 1883 has no confidentiality. Production subscriber deliberately rejects this hostname. Before deployment, move firmware and worker to a private authenticated TLS broker with publish/subscribe ACLs restricting each device topic. Preserve sensor calibration and conversion equations. Actual firmware TLS, QoS and JSON compatibility still require verification.
+The user reports `broker.hivemq.com:1883`, topic `aqi/node1/readings`, device `node1`, interval 900 seconds. The supplied firmware confirms the existing public topic, 10-second sampling and 900-second averaged publish window. This shared public broker provides no authenticated device provenance and plaintext port 1883 has no confidentiality. Production subscriber deliberately rejects this hostname. Before deployment, move firmware and worker to a private authenticated TLS broker with publish/subscribe ACLs restricting each device topic. Preserve sensor calibration and conversion equations. Actual firmware TLS, QoS and JSON compatibility still require verification.
 
 Use these non-secret settings on BOTH web and worker:
 
@@ -38,7 +38,7 @@ Required identity is `device_id` from the allowlist. Optional `city` must identi
 
 Use an ISO 8601 timestamp with timezone, accurate device clock, and unique measurement timestamps. Measurement time and server reception time are stored separately. Timestamps older than seven days or over 30 seconds ahead are rejected. A missing, malformed or timezone-less timestamp requires a stable `message_id` across retries; reception time is then used with explicit `server_received` quality. Retained undated messages are rejected. Unique device/event keys prevent duplicate observations or retries falsely refreshing freshness. Maximum JSON message size is 16 KiB; duplicate keys and nonfinite constants are rejected. Do not send secrets in payloads.
 
-Publish QoS 1 and use a broker supporting persistent sessions and durable queues. Worker uses a persistent client ID, manual acknowledgments after PostgreSQL commit, reconnect backoff, and an advisory lock to prevent overlapping subscribers. Invalid messages are deliberately acknowledged and discarded with sanitized logs. Database failures leave messages unacknowledged and reconnect. Delivery guarantees depend on firmware QoS and broker persistence, which have not been inspected. Render supervises worker restart; a lost database leader connection terminates the worker. Gunicorn imports never start a subscriber.
+For durable delivery, a publisher using QoS 1 and a broker with persistent sessions/queues are needed. The corrected supplied PubSubClient firmware retains its existing QoS 0 publishing behavior, so end-to-end durable delivery is not guaranteed. Worker uses a persistent client ID, manual acknowledgments after PostgreSQL commit, reconnect backoff, and an advisory lock to prevent overlapping subscribers. Invalid messages are deliberately acknowledged and discarded with sanitized logs. Database failures leave messages unacknowledged and reconnect. Delivery guarantees depend on firmware QoS and broker persistence, which have not been inspected. Render supervises worker restart; a lost database leader connection terminates the worker. Gunicorn imports never start a subscriber.
 
 ## PostgreSQL migration and local commands
 
