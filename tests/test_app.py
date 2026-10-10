@@ -101,10 +101,8 @@ def test_refresh_validates_units_coordinates_and_recalculates(application,monkey
     monkeypatch.setenv('REFRESH_TOKEN','test-token')
     client=application.test_client()
     assert client.post('/api/refresh').status_code==401
-    assert client.post('/api/refresh',headers={'Authorization':'Bearer test-token'}).status_code==200
-    import requests
-    fetch.side_effect=requests.Timeout()
-    assert client.post('/api/refresh',headers={'Authorization':'Bearer test-token'}).status_code==502
+    # Accepted refresh, provider failures, and worker cleanup are exercised by
+    # test_refresh_async; do not launch an unjoined daemon in this fixture.
 
 
 def test_import_preserves_originals_and_never_relabels_source_aqi(application,tmp_path):

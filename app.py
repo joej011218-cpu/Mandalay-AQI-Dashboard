@@ -205,6 +205,8 @@ def create_app(config=None):
     if config:
         app.config.update({k:v for k,v in config.items() if k != 'SQLALCHEMY_DATABASE_URI'})
     db.init_app(app)
+    from refresh_jobs import (RefreshState, enqueue, status as refresh_status,
+                              cli_refresh, migration_connection, migrate_refresh_schema)
 
     @app.after_request
     def headers(response):
@@ -289,18 +291,42 @@ def create_app(config=None):
         return jsonify(data=alerts, threshold=201, observations=len(rows),
                        unavailable_aqi_count=sum(r['cpcb_aqi'] is None for r in data), **metadata())
 
-    @app.post('/api/refresh')
-    def refresh_route():
+    def authenticate_refresh():
         token = os.getenv('REFRESH_TOKEN')
         if not token:
             return jsonify(error='Refresh is disabled until REFRESH_TOKEN is configured'), 503
-        if not hmac.compare_digest(request.headers.get('Authorization',''), 'Bearer '+token):
+        supplied = request.headers.get('Authorization', '').encode('utf-8')
+        if not hmac.compare_digest(supplied, ('Bearer '+token).encode('utf-8')):
             return jsonify(error='Unauthorized'), 401
+        return None
+
+    @app.post('/api/refresh')
+    def refresh_route():
+        denied = authenticate_refresh()
+        if denied is not None:
+            return denied
         try:
-            return jsonify(imported=refresh(), **metadata())
-        except (requests.RequestException, KeyError, ValueError, TypeError):
+            job_id = enqueue(app)
+            response = app.response_class(status=202)
+            response.headers['Location'] = '/api/refresh/status'
+            if job_id:
+                response.headers['X-Refresh-Job-ID'] = job_id
+            return response
+        except Exception as error:
             db.session.rollback()
-            return jsonify(error='Air quality provider unavailable or returned invalid Mandalay data'), 502
+            app.logger.error('Unable to launch Mandalay refresh error_type=%s', type(error).__name__)
+            return jsonify(error='Refresh could not be scheduled; verify database and refresh schema'), 503
+
+    @app.get('/api/refresh/status')
+    def refresh_status_route():
+        denied = authenticate_refresh()
+        if denied is not None:
+            return denied
+        try:
+            return jsonify(data=refresh_status(), **metadata())
+        except Exception:
+            db.session.rollback()
+            return jsonify(error='Refresh status unavailable'), 503
 
     @app.errorhandler(500)
     def internal_error(error):
@@ -310,11 +336,21 @@ def create_app(config=None):
     @app.cli.command('init-db')
     def init_db():
         # Additive migration from the original app: readings remain unchanged.
-        db.create_all()
+        with migration_connection() as conn:
+            db.metadata.create_all(bind=conn)
 
     @app.cli.command('refresh-data')
     def refresh_data():
-        print(f'Imported {refresh()} Mandalay hourly readings; CPCB results recalculated')
+        count = cli_refresh(app)
+        if count is None:
+            print('Mandalay refresh already active; skipped overlapping CLI refresh')
+        else:
+            print(f'Imported {count} Mandalay hourly readings; CPCB results recalculated')
+
+    @app.cli.command('migrate-refresh')
+    def migrate_refresh():
+        migrate_refresh_schema()
+        print('Additive Mandalay refresh status table is ready')
 
     @app.cli.command('recalculate-cpcb')
     def recalculate_cpcb():
