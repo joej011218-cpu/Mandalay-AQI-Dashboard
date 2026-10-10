@@ -90,10 +90,11 @@ def test_startup_migrates_before_serving_and_fails_closed(tmp_path, migration_ex
     result = subprocess.run(command, cwd=tmp_path if outside_root else root, env=env,
                             capture_output=True, text=True, timeout=10)
     commands = log.read_text().splitlines()
-    assert commands[0] == 'flask --app wsgi migrate-refresh'
+    assert commands[0] == 'flask --app wsgi migrate-hardware'
     assert result.returncode == migration_exit
     if migration_exit:
         assert len(commands) == 1
     else:
-        assert commands[1] == ('gunicorn wsgi:app --bind 0.0.0.0:4321 '
+        assert commands[1] == 'flask --app wsgi migrate-refresh'
+        assert commands[2] == ('gunicorn wsgi:app --bind 0.0.0.0:4321 '
                                 '--workers 2 --timeout 60 --access-logfile -')

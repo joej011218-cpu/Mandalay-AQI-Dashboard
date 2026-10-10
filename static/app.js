@@ -191,7 +191,7 @@ async function load() {
       $("eligibility").textContent =
         `${r.eligible_pollutants.length}/7 eligible pollutants · ${r.status} · ${r.coverage}`;
       $("aqi-reasons").textContent = [...r.reasons,r.missing_pollutants.length?"Missing/insufficient: "+r.missing_pollutants.map(p=>names[p]).join(", "):""].filter(Boolean).join("; ");
-      $("hardware-status").textContent=`ESP32: ${r.hardware.status} · MQTT subscriber ${r.hardware.mqtt_connected?"connected":"disconnected/unverified"}`;
+      $("hardware-status").textContent=`ESP32: ${r.hardware.status} · ${r.hardware.transport==="webhook"?"EMQX HTTPS delivery":`MQTT subscriber ${r.hardware.mqtt_connected?"connected":"disconnected/unverified"}`}`;
       $("calculation-details").replaceChildren();
       for (const [field, detail] of Object.entries(r.pollutant_details)) {
         const tr = document.createElement("tr");

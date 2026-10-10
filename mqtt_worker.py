@@ -12,22 +12,11 @@ import paho.mqtt.client as mqtt
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from app import create_app, db
-from hardware import settings, ingest, MQTTState, HardwareObservation, SyntheticObservationError
+from hardware import (settings, ingest, MQTTState, HardwareObservation,
+                      SyntheticObservationError, decode_payload as decode)
 
 log=logging.getLogger('mandalay.mqtt')
 LEADER_LOCK=219588960892
-
-
-def decode(payload):
-    if len(payload)>16384:raise ValueError('MQTT payload exceeds 16 KiB')
-    def pairs(items):
-        result={}
-        for key,value in items:
-            if key in result:raise ValueError('Duplicate JSON fields')
-            result[key]=value
-        return result
-    def invalid_constant(value):raise ValueError('Nonfinite JSON constants are forbidden')
-    return json.loads(payload.decode('utf-8'),object_pairs_hook=pairs,parse_constant=invalid_constant)
 
 
 class Subscriber:

@@ -8,9 +8,8 @@ services:
     name: mandalay-aqi-dashboard
     branch: feature/mandalay-hardware-integration
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.lock.txt
-    preDeployCommand: flask --app wsgi migrate-refresh && flask --app wsgi init-db && flask --app wsgi recalculate-cpcb && flask --app wsgi migrate-hardware
     startCommand: bash scripts/start_web.sh
     healthCheckPath: /api/health
     envVars:
@@ -18,6 +17,14 @@ services:
         fromDatabase:
           name: mandalay-aqi-db
           property: connectionString
+      - key: HARDWARE_TRANSPORT
+        value: webhook
+      - key: HARDWARE_WEBHOOK_TOKEN
+        sync: false
+      - key: MQTT_PUBLISH_USERNAME
+        value: mandalay_esp32
+      - key: MQTT_TOPIC_TEMPLATE
+        value: aqi/{device_id}/readings
       - key: MANDALAY_DEVICE_IDS
         value: node1
       - key: HARDWARE_DEVICE_ID
@@ -32,56 +39,5 @@ services:
         value: https://mandalay-aqi-prediction.onrender.com/prediction.html
       - key: PREDICTION_AQI_STANDARD
         value: cpcb-2014-rolling-v1
-      - key: PYTHON_VERSION
-        value: 3.12.14
-  - type: cron
-    name: mandalay-aqi-hourly
-    branch: feature/mandalay-hardware-integration
-    runtime: python
-    plan: starter
-    schedule: "5 * * * *"
-    buildCommand: pip install -r requirements.lock.txt
-    startCommand: flask --app wsgi migrate-refresh && flask --app wsgi refresh-data
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mandalay-aqi-db
-          property: connectionString
-      - key: PYTHON_VERSION
-        value: 3.12.14
-
-  - type: worker
-    name: mandalay-mqtt-ingestion
-    branch: feature/mandalay-hardware-integration
-    runtime: python
-    plan: starter
-    numInstances: 1
-    buildCommand: pip install -r requirements.lock.txt
-    startCommand: python mqtt_worker.py
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mandalay-aqi-db
-          property: connectionString
-      - key: MANDALAY_DEVICE_IDS
-        value: node1
-      - key: HARDWARE_DEVICE_ID
-        value: node1
-      - key: HARDWARE_SAMPLE_SECONDS
-        value: "900"
-      - key: HARDWARE_STALE_SECONDS
-        value: "1800"
-      - key: MQTT_HOST
-        value: p0fb61ec.ala.asia-southeast1.emqxsl.com
-      - key: MQTT_PORT
-        value: "8883"
-      - key: MQTT_EXPECTED_USERNAME
-        value: mandalay_worker
-      - key: MQTT_USERNAME
-        sync: false
-      - key: MQTT_PASSWORD
-        sync: false
-      - key: MQTT_TOPIC_TEMPLATE
-        value: aqi/{device_id}/readings
       - key: PYTHON_VERSION
         value: 3.12.14

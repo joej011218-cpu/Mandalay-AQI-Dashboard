@@ -2,6 +2,16 @@
 
 Flask, PostgreSQL and Open-Meteo dashboard for **Mandalay, Myanmar only** (21.9588, 96.0891). Live, Analytics, Alerts and About use **Indian CPCB AQI**, calculated from pollutant histories. The interface follows the public reference's top navigation, AQI panel, pollutant cards, charts and alerts, with the same six CPCB colors and light/dark mode. No existing Vadodara application or model was changed.
 
+## Hardware delivery without a paid MQTT worker
+
+Use [EMQX HTTP Server webhook deployment](docs/EMQX_HTTP_WEBHOOK.md) for the
+existing Render web service. `POST /api/hardware/ingest` authenticates a private
+`Authorization: Bearer <token>` header (`HARDWARE_WEBHOOK_TOKEN`), validates and commits the
+original sensor payload, and deduplicates firmware `message_id` retries. The
+current Blueprint has no paid MQTT worker or cron service; startup performs the
+additive hardware/refresh migrations on Free. Historical MQTT-worker deployment
+instructions below describe an optional legacy transport, not this new setup.
+
 ## Setup
 
 Python 3.12 and PostgreSQL 17 are recommended. SQLite is rejected.
@@ -102,7 +112,7 @@ Set `PREDICTION_URL` to the deployed HTTPS Mandalay application and, **only afte
 
 ## Render
 
-Create a Render Blueprint from `render.yaml`. It provisions paid managed PostgreSQL, a Gunicorn web service and a minute-5 hourly UTC cron. Review Render pricing before deployment. The predeploy command initializes the additive schema and recalculates historical CPCB results. The cron refreshes Mandalay measurements and derived AQI atomically. Import the supplied workbook and run the first refresh in a secure shell with the managed database URL; enable database backups, TLS and freshness monitoring. No Render deployment was performed during this change.
+For the existing service, follow [EMQX webhook deployment](docs/EMQX_HTTP_WEBHOOK.md) and preserve the current PostgreSQL binding. `render.yaml` now describes a Free web service without a paid background worker or cron. Its database declaration is a provisioning template, not an instruction to replace your existing database; existing database charges/plan limits still apply. Startup performs additive hardware/refresh migrations before Gunicorn. Use cron-job.org with the existing authenticated refresh endpoint for scheduled Open-Meteo collection. No Render deployment was performed during this change.
 
 ## Tests
 
@@ -143,7 +153,7 @@ Confirmed EMQX Cloud Serverless settings and exact web/worker deployment steps a
 
 A session-level PostgreSQL advisory lock is acquired before starting a thread and held through the entire refresh. Overlapping authenticated calls coalesce to empty 202 responses and do not create another worker. This coordinates different Gunicorn processes and the existing `flask --app wsgi refresh-data` scheduled CLI, which now skips an overlapping active refresh. Existing dataset transaction locks continue protecting atomic measurement/CPCB updates and imports. Locks are explicitly released before a connection returns to the pool, or its connection is invalidated on cleanup failure.
 
-An additive status table is required before using the new endpoint or scheduled CLI. Render pre-deploy explicitly runs the migration. The web startup script also runs it before starting Gunicorn, including where Shell or pre-deploy is unavailable; cron runs it before refreshing. A shared PostgreSQL transaction advisory lock serializes `init-db` and `migrate-refresh` across processes. A failed migration prevents the new web process from listening. For a running database, apply only this idempotent migration:
+An additive status table is required before using the new endpoint or scheduled CLI. The web startup script runs hardware and refresh migrations before starting Gunicorn, including on Free where Shell/pre-deploy is unavailable. A shared PostgreSQL transaction advisory lock serializes `init-db`, `migrate-hardware` and `migrate-refresh` across processes. A failed migration prevents the new web process from listening. For a running database, apply only this idempotent refresh migration:
 
 ```sh
 flask --app wsgi migrate-refresh
@@ -151,7 +161,7 @@ flask --app wsgi migrate-refresh
 
 This creates only `mandalay_refresh_state`, preserves historical and hardware records, and introduces no new dependencies, Render service or environment variable. The existing `REFRESH_TOKEN` value must remain private. In cron-job.org, use POST to `https://YOUR_MANDALAY_DASHBOARD/api/refresh`, body empty, and configure the Authorization header privately as `Bearer <your existing REFRESH_TOKEN>`. Do not put the token in the URL. Status checks use GET to the same dashboard's `/api/refresh/status` with the same Authorization header.
 
-See [deployment steps and migration safeguards](docs/REFRESH_DEPLOYMENT.md) before deploying an existing service. Preserve its existing database binding and token; do not provision a replacement empty database.
+See [current Free/webhook deployment steps](docs/EMQX_HTTP_WEBHOOK.md) and [original paid-service migration guidance](docs/REFRESH_DEPLOYMENT.md). Preserve the existing database binding and token; do not provision a replacement empty database.
 
 The status JSON contains `data.status` (`idle`, `queued`, `running`, `succeeded`, `failed`, `interrupted`), `job_id`, `source`, `requested_at`, `started_at`, `finished_at`, `imported_rows` and `error`. Times use explicit UTC offsets. Idle has no job metadata. Success is reported after the database operation finishes; an accepted response alone is not completion. Errors are sanitized exception class names; token values, provider error bodies and connection strings are not logged. Start/completion/error logs include job ID, UTC time and imported count on success. Only the latest job is retained; a subsequent refresh replaces the previous status. Poll after submission and compare job IDs when available; this is not a per-request history or notification service.
 

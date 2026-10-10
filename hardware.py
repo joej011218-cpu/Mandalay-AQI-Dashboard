@@ -18,6 +18,24 @@ import combined_cpcb as combined
 UTC=timezone.utc
 
 
+def decode_payload(payload):
+    """Strict JSON shared by MQTT and HTTP; never accept ambiguous/nonfinite data."""
+    if len(payload)>16384:raise ValueError('Sensor payload exceeds 16 KiB')
+    def pairs(items):
+        result={}
+        for key,value in items:
+            if key in result:raise ValueError('Duplicate JSON fields')
+            result[key]=value
+        return result
+    def invalid_constant(value):raise ValueError('Nonfinite JSON constants are forbidden')
+    def finite_float(value):
+        number=float(value)
+        if not math.isfinite(number):raise ValueError('Nonfinite JSON numbers are forbidden')
+        return number
+    return json.loads(payload.decode('utf-8'),object_pairs_hook=pairs,
+                      parse_constant=invalid_constant,parse_float=finite_float)
+
+
 class SyntheticObservationError(ValueError):
     """Broker tests are never production hardware observations."""
 
@@ -94,7 +112,7 @@ def validate_payload(payload,received_at=None,retained=False):
     if device not in cfg['devices']:raise ValueError('Unknown or unconfigured Mandalay device')
     city=payload.get('city',CITY)
     if city not in (CITY,'Mandalay'):raise ValueError('Only Mandalay payloads are accepted')
-    for key in ('co_range_valid','co_valid','nh3_valid','nh3_range_valid','sensor_valid'):
+    for key in ('co_range_valid','co_valid','nh3_valid','nh3_range_valid','sensor_valid','dht_valid'):
         if key in payload and not isinstance(payload[key],bool):raise ValueError(f'{key} must be a boolean')
     expected={'co_mg_m3':'mg/m3','nh3_ug_m3':'ug/m3'}
     if 'units' in payload:
@@ -105,6 +123,9 @@ def validate_payload(payload,received_at=None,retained=False):
     temp=_numeric(payload,'temperature',-50,100);humidity=_numeric(payload,'humidity',0,100)
     for key in ('co_ppm','co_ratio','nh3_ratio'):_numeric(payload,key)
     if not any(k in payload for k in ('co_mg_m3','nh3_ug_m3','temperature','humidity')):raise ValueError('No supported measurement fields')
+    event=payload.get('message_id')
+    if event is not None and (not isinstance(event,str) or not 1<=len(event)<=100):
+        raise ValueError('message_id must be a nonempty string of at most 100 characters')
     original=payload.get('timestamp');at=None
     if isinstance(original,str):
         try:
@@ -116,11 +137,13 @@ def validate_payload(payload,received_at=None,retained=False):
         if at>received_at+timedelta(seconds=30) or at<received_at-timedelta(days=7):raise ValueError('Measurement timestamp is outside the permitted clock/backfill range')
         quality='measurement';identity='timestamp:'+at.isoformat()
     else:
-        event=payload.get('message_id')
         if not isinstance(event,str) or not 1<=len(event)<=100:raise ValueError('Untrusted/missing timestamp requires a stable message_id for deduplication')
         if retained:raise ValueError('Undated retained messages cannot become current measurements')
         at=received_at;quality='server_received';identity='message:'+event
-    validity={key:payload[key] for key in ('co_range_valid','co_valid','nh3_valid','nh3_range_valid','sensor_valid','co_ppm','co_ratio','nh3_ratio') if key in payload}
+    # Firmware IDs remain stable across HTTP retries, including missing clocks.
+    # Keep timestamp deduplication for legacy messages without an ID.
+    if event is not None:identity='message:'+event
+    validity={key:payload[key] for key in ('co_range_valid','co_valid','nh3_valid','nh3_range_valid','sensor_valid','dht_valid','co_ppm','co_ratio','nh3_ratio') if key in payload}
     validity.update(retained=retained,calibration_verified=False,
                     co_flags_supplied=any(k in payload for k in ('co_valid','co_range_valid')),
                     nh3_flags_supplied=any(k in payload for k in ('nh3_valid','nh3_range_valid')))
@@ -136,6 +159,18 @@ def ingest(payload,received_at=None,retained=False):
     values=validate_payload(payload,received_at,retained)
     stmt=insert(HardwareObservation).values(values).on_conflict_do_nothing(constraint='uq_mandalay_hardware_event').returning(HardwareObservation.id)
     try:
+        if payload.get('message_id') is not None:
+            # Also deduplicate pre-webhook rows whose event_key used timestamps.
+            # Transaction locks coordinate the audit lookup across HTTP workers.
+            digest=hashlib.sha256((values['device_id']+'\0'+payload['message_id']).encode()).digest()
+            lock=int.from_bytes(digest[:8],'big',signed=True)
+            db.session.execute(select(func.pg_advisory_xact_lock(lock)))
+            existing=db.session.scalar(select(HardwareObservation.id).where(
+                HardwareObservation.device_id==values['device_id'],
+                HardwareObservation.original_payload['message_id'].astext==payload['message_id']).limit(1))
+            if existing is not None:
+                db.session.commit()
+                return dict(inserted=False,device_id=values['device_id'])
         result=db.session.execute(stmt).scalar_one_or_none();db.session.commit()
         return dict(inserted=result is not None,device_id=values['device_id'])
     except Exception:
@@ -160,8 +195,10 @@ def hardware_status(now=None):
     worker_fresh=state is not None and now-state.heartbeat_at<timedelta(seconds=90)
     age=max((now-row.timestamp).total_seconds(),(now-row.received_at).total_seconds()) if row else None
     status='unconfigured' if not cfg['primary'] else 'offline' if not row else 'stale' if age>cfg['stale'] else 'online'
-    return dict(device_id=cfg['primary'] or None,status=status,age_seconds=age,stale_after_seconds=cfg['stale'],
-                mqtt_connected=bool(worker_fresh and state.connected),subscriber_running=worker_fresh,
+    transport=current_app.config.get('HARDWARE_TRANSPORT',os.getenv('HARDWARE_TRANSPORT','mqtt'))
+    return dict(device_id=cfg['primary'] or None,status=status,age_seconds=age,stale_after_seconds=cfg['stale'],transport=transport,
+                mqtt_connected=bool(worker_fresh and state.connected) if transport=='mqtt' else None,
+                subscriber_running=worker_fresh if transport=='mqtt' else False,
                 last_observation=serialize_hardware(row) if row else None,
                 identity_note='Device identity requires authenticated broker ACLs; allowlisted JSON identifiers alone are not authentication')
 
@@ -355,8 +392,14 @@ def register(app):
     @app.cli.command('migrate-hardware')
     def migrate():
         # CREATE IF NOT EXISTS only; never ALTER/DROP prediction or legacy data.
-        HardwareObservation.__table__.create(db.engine,checkfirst=True)
-        MQTTState.__table__.create(db.engine,checkfirst=True)
+        from refresh_jobs import migration_connection
+        with migration_connection() as conn:
+            HardwareObservation.__table__.create(conn,checkfirst=True)
+            MQTTState.__table__.create(conn,checkfirst=True)
+            conn.execute(select(HardwareObservation.__table__).limit(0))
+            conn.execute(select(MQTTState.__table__).limit(0))
         print('Additive Mandalay hardware tables and indexes are ready')
 
     app.register_blueprint(bp)
+    from hardware_webhook import register as register_webhook
+    register_webhook(app)
