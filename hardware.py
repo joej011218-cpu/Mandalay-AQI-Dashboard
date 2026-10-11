@@ -171,7 +171,11 @@ def ingest(payload,received_at=None,retained=False):
             if existing is not None:
                 db.session.commit()
                 return dict(inserted=False,device_id=values['device_id'])
-        result=db.session.execute(stmt).scalar_one_or_none();db.session.commit()
+        from hardware_events import lock_device, reconcile
+        lock_device(values['device_id'])
+        result=db.session.execute(stmt).scalar_one_or_none()
+        if result is not None:reconcile(values['received_at'])
+        db.session.commit()
         return dict(inserted=result is not None,device_id=values['device_id'])
     except Exception:
         db.session.rollback();raise
@@ -180,6 +184,7 @@ def ingest(payload,received_at=None,retained=False):
 def serialize_hardware(row):
     return dict(device_id=row.device_id,city=row.city,timestamp=row.timestamp.astimezone(TZ).isoformat(),
         received_at=row.received_at.astimezone(TZ).isoformat(),timestamp_quality=row.timestamp_quality,
+        message_id=row.original_payload.get('message_id'),
         co_mg_m3=row.co_mg_m3,nh3_ug_m3=row.nh3_ug_m3,temperature=row.temperature,humidity=row.humidity,
         co_valid=row.co_valid,nh3_valid=row.nh3_valid,validity=row.validity,source='ESP32',
         units={'co_mg_m3':'mg/m³','nh3_ug_m3':'µg/m³','temperature':'°C','humidity':'%'})
@@ -190,7 +195,8 @@ def hardware_status(now=None):
     row=None
     if cfg['primary']:
         row=db.session.scalar(select(HardwareObservation).where(production_observation_filter(),HardwareObservation.device_id==cfg['primary'],
-            HardwareObservation.city==CITY,HardwareObservation.timestamp<=now).order_by(HardwareObservation.timestamp.desc()).limit(1))
+            HardwareObservation.city==CITY,HardwareObservation.timestamp<=now).order_by(
+                HardwareObservation.timestamp.desc(),HardwareObservation.received_at.desc(),HardwareObservation.id.desc()).limit(1))
     state=db.session.get(MQTTState,'subscriber')
     worker_fresh=state is not None and now-state.heartbeat_at<timedelta(seconds=90)
     age=max((now-row.timestamp).total_seconds(),(now-row.received_at).total_seconds()) if row else None
@@ -256,8 +262,12 @@ def monitoring_latest(now=None):
     if state['status']!='online':
         excluded.update(carbon_monoxide='ESP32 is missing, offline or stale; no modeled CO fallback',ammonia='ESP32 is missing, offline or stale')
     if model_stale:excluded.update({p:'Open-Meteo is missing or stale' for p in combined.OPEN_METEO})
+    raw=state['last_observation']
+    if raw:
+        for p,flag in (('carbon_monoxide','co_valid'),('ammonia','nh3_valid')):
+            if not raw[flag]:excluded[p]='Latest ESP32 estimate is invalid; not AQI eligible'
     calc=combined.calculate(at,history,excluded)
-    raw=state['last_observation'];measurements={}
+    measurements={}
     for p in combined.POLLUTANTS:
         hw=p not in combined.OPEN_METEO
         value=None;stamp=None;status='missing'
@@ -303,23 +313,14 @@ def monitoring_alerts(days,now=None):
                 timestamp=r['timestamp'],value=r['cpcb_aqi'],threshold=201,unit='CPCB AQI',averaging_hours=None,source='Combined',
                 severity=r['category'],color=r['color'],message=f"Mandalay: {r['precautions']}",provisional=True))
         for p,d in r['pollutant_details'].items():
-            if d['eligible'] and d['average'] is not None and d['average']>rolling[p]:
+            if p in combined.OPEN_METEO and d['eligible'] and d['average'] is not None and d['average']>rolling[p]:
                 events.append(dict(id=alert_id('rolling',p,r['timestamp'],settings()['primary']),alert_type='rolling-concentration',
                     pollutant=p,timestamp=r['timestamp'],value=d['average'],threshold=rolling[p],unit=d['unit'],averaging_hours=d['averaging_hours'],
                     source=d['source'],severity=combined.category(d['subindex']) if d['subindex'] is not None else 'Severe',
                     color=combined.color(combined.category(d['subindex']) if d['subindex'] is not None else 'Severe'),
                     message='Mandalay covered rolling concentration exceeds the configured threshold. '+combined.PRECAUTIONS[combined.category(d['subindex']) if d['subindex'] is not None else 'Severe'],provisional=True))
-    # Raw warnings use actual saved hardware observations, not hourly means.
+    # Hardware warnings are persisted separately; preserve modeled raw warnings.
     if raw_limits:
-        start=now-timedelta(days=days)
-        hw=db.session.scalars(select(HardwareObservation).where(production_observation_filter(),HardwareObservation.device_id==settings()['primary'],
-            HardwareObservation.city==CITY,HardwareObservation.timestamp>=start,HardwareObservation.timestamp<=now)).all()
-        for sample in hw:
-            for p,key,valid in (('carbon_monoxide','co_mg_m3','co_valid'),('ammonia','nh3_ug_m3','nh3_valid')):
-                if p in raw_limits and getattr(sample,valid) and getattr(sample,key)>raw_limits[p]:
-                    events.append(dict(id=alert_id('raw',p,sample.event_key),alert_type='raw-concentration',pollutant=p,
-                        timestamp=sample.timestamp.astimezone(TZ).isoformat(),value=getattr(sample,key),threshold=raw_limits[p],unit=combined.UNITS[p],
-                        averaging_hours=0,source='ESP32',severity='Warning',color='#E8C547',message='Raw sensor warning; not an 8/24-hour CPCB exceedance. Reduce exposure and check sensor validity; seek medical help for breathing difficulty.',provisional=True))
         for r in rows:
             for p in combined.OPEN_METEO:
                 if p in raw_limits and r[p] is not None and r[p]>raw_limits[p]:
@@ -332,11 +333,16 @@ def monitoring_alerts(days,now=None):
         events.append(dict(id=alert_id('offline',status['device_id'],last['timestamp'] if last else 'never'),alert_type='sensor-status',pollutant='CO / NH3',
             timestamp=stamp,value=None,threshold=status['stale_after_seconds'],unit='seconds',averaging_hours=None,source='ESP32',severity=status['status'],
             color='#E8C547',message='ESP32 hardware is '+status['status']+'; CO/NH3 are unavailable and no Open-Meteo CO is substituted.',provisional=True))
+    from hardware_events import events as saved_events
+    events.extend(saved_events(days,now))
+    # The persistent episode replaces the transient configured-device warning.
+    if settings()['primary']:events=[e for e in events if not (e['alert_type']=='sensor-status' and 'status' not in e)]
     unique={e['id']:e for e in events}
     return sorted(unique.values(),key=lambda e:e['timestamp'],reverse=True)
 
 
 def register(app):
+    from hardware_events import HardwareAlert
     bp=Blueprint('mandalay_hardware',__name__)
     def days():
         value=int(request.args.get('days','7'))
@@ -359,7 +365,7 @@ def register(app):
         rows=db.session.scalars(select(HardwareObservation).where(production_observation_filter(),HardwareObservation.device_id==cfg['primary'],HardwareObservation.city==CITY,
             HardwareObservation.timestamp>=now-timedelta(days=limit),HardwareObservation.timestamp<=now).order_by(HardwareObservation.timestamp).limit(50001)).all()
         if len(rows)>50000:return jsonify(error='Raw history exceeds 50,000 rows; request a shorter period or hourly monitoring history'),413
-        return jsonify(data=[serialize_hardware(r) for r in rows],**metadata())
+        return jsonify(data=[serialize_hardware(r) for r in rows],sample_period_seconds=cfg['cadence'],**metadata())
     @bp.get('/api/monitoring/latest')
     def latest():return jsonify(data=monitoring_latest(),**metadata())
     @bp.get('/api/monitoring/history')
@@ -396,8 +402,12 @@ def register(app):
         with migration_connection() as conn:
             HardwareObservation.__table__.create(conn,checkfirst=True)
             MQTTState.__table__.create(conn,checkfirst=True)
+            HardwareAlert.__table__.create(conn,checkfirst=True)
+            # Safe for an already-created alert table; never rewrites old rows.
+            conn.execute(text('ALTER TABLE mandalay_hardware_alert_events ADD COLUMN IF NOT EXISTS evidence_at TIMESTAMPTZ'))
             conn.execute(select(HardwareObservation.__table__).limit(0))
             conn.execute(select(MQTTState.__table__).limit(0))
+            conn.execute(select(HardwareAlert.__table__).limit(0))
         print('Additive Mandalay hardware tables and indexes are ready')
 
     app.register_blueprint(bp)

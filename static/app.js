@@ -51,6 +51,8 @@ const fmt = (v) =>
   v == null
     ? "—"
     : Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 });
+const estimate = v => typeof v === "number" && Number.isFinite(v)
+  ? v.toLocaleString(undefined, { maximumSignificantDigits: 4 }) : "—";
 const time = (v) =>
   new Date(v).toLocaleString("en-GB", {
     timeZone: "Asia/Yangon",
@@ -82,6 +84,8 @@ function chart(
   svg = $("chart"),
   field = "cpcb_aqi",
   caption = $("chart-caption"),
+  diagnostic = false,
+  maxGapMs = 5400000,
 ) {
   svg.replaceChildren();
   let axis = svg.nextElementSibling;
@@ -109,7 +113,7 @@ function chart(
     axis.append(label);
   }
   if (!points.length) {caption.textContent="No covered observations; gaps are not filled.";return;}
-  const max = Math.max(50, ...points.map((r) => r[field]));
+  const max = Math.max(field === "cpcb_aqi" ? 50 : 1, ...points.map((r) => r[field]));
   const x = (r) =>
     40 +
     ((new Date(r.timestamp).getTime() - start) /
@@ -130,7 +134,7 @@ function chart(
       y: yy,
       fill: "var(--muted)",
       "font-size": 12,
-    }).textContent = Math.round((max * i) / 4);
+    }).textContent = fmt((max * i) / 4);
   }
   let previous;
   for (const r of rows) {
@@ -140,31 +144,34 @@ function chart(
     }
     if (
       previous &&
-      new Date(r.timestamp) - new Date(previous.timestamp) <= ($("view").value === "daily" ? 129600000 : 5400000)
+      new Date(r.timestamp) - new Date(previous.timestamp) <= (diagnostic ? maxGapMs : $("view").value === "daily" ? 129600000 : 5400000) &&
+      (!diagnostic || r.sensor_valid === previous.sensor_valid)
     )
       add("line", {
         x1: x(previous),
         y1: y(previous),
         x2: x(r),
         y2: y(r),
-        stroke: "var(--accent)",
+        stroke: diagnostic && !r.sensor_valid ? "#E8C547" : "var(--accent)",
+        "stroke-dasharray": diagnostic && !r.sensor_valid ? "4 3" : "none",
         "stroke-width": 2,
       });
     const dot = add("circle", {
       cx: x(r),
       cy: y(r),
       r: 2,
-      fill: "var(--accent)",
+      fill: diagnostic && !r.sensor_valid ? "#E8C547" : "var(--accent)",
+      "data-valid": diagnostic ? String(r.sensor_valid) : "covered",
     });
     const title = document.createElementNS(
       "http://www.w3.org/2000/svg",
       "title",
     );
-    title.textContent = `${time(r.timestamp)} · ${field === "cpcb_aqi" ? "AQI" : names[field]} ${fmt(r[field])}`;
+    title.textContent = `${time(r.timestamp)} · ${field === "cpcb_aqi" ? "AQI" : names[field]} ${diagnostic ? estimate(r[field]) : fmt(r[field])}${diagnostic ? " " + unit(field) + " · ESP32 · " + (r.sensor_valid ? "valid estimate" : "invalid estimate — not AQI eligible") : ""}`;
     dot.append(title);
     previous = r;
   }
-  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${$("view").value} observations. Gaps are not interpolated.`;
+  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Raw samples use the period filter; daily view applies to covered-hour charts and statistics." : ""}`;
 }
 let loading = false;
 async function load() {
@@ -218,13 +225,16 @@ async function load() {
           let value=m.value,status=m.status;
           const raw=r.hardware.last_observation;
           // Display the audited estimate only; never feed it into AQI/history.
-          if(k==="carbon_monoxide" && m.source==="ESP32" && raw && raw.timestamp===m.timestamp){
-            if(typeof raw.co_mg_m3==="number" && Number.isFinite(raw.co_mg_m3)) value=raw.co_mg_m3;
-            if(raw.validity?.co_range_valid===false){
-              status="Invalid — outside calibrated sensor range"+(m.status==="stale"?" · stale":"");
+          if(["carbon_monoxide","ammonia"].includes(k) && m.source==="ESP32" && raw && raw.timestamp===m.timestamp){
+            const key=k==="carbon_monoxide"?"co_mg_m3":"nh3_ug_m3";
+            if(typeof raw[key]==="number" && Number.isFinite(raw[key])) value=raw[key];
+            const valid=raw[k==="carbon_monoxide"?"co_valid":"nh3_valid"];
+            status=(valid?"valid estimate":"Invalid — not AQI eligible")+(m.status==="stale"?" · stale":"");
+            if(k==="carbon_monoxide" && raw.validity?.co_range_valid===false){
+              status="Outside calibrated range — not AQI eligible"+(m.status==="stale"?" · stale":"");
             }
           }
-          return card(n,fmt(value),`${m.unit} · ${m.source} · ${status}${m.timestamp?" · "+time(m.timestamp):" · no measurement"}`);
+          return card(n,source(k)==="ESP32"?estimate(value):fmt(value),`${m.unit} · ${m.source} · ${status}${m.timestamp?" · "+time(m.timestamp):" · no measurement"}`);
         }),
       );
       $("status").textContent = `Mandalay monitoring · ${r.aqi_label} · ${r.status}${r.model_stale?" · Open-Meteo stale/missing":""}`;
@@ -241,6 +251,7 @@ async function load() {
           card("Best AQI", fmt(v.min), "Selected period"),
           card("AQI readings", String(v.count), "Eligible calculated hours"),
         );
+        const hardware = await api(`/api/hardware/history?days=${days}`);
         $("pollutant-charts").replaceChildren();
         for (const [field, label] of Object.entries(names)) {
           const box = document.createElement("div");
@@ -260,7 +271,16 @@ async function load() {
           const caption = document.createElement("p");
           box.append(title, svg, caption);
           $("pollutant-charts").append(box);
-          chart(h.data, svg, field, caption);
+          if (["carbon_monoxide","ammonia"].includes(field)) {
+            const key=field==="carbon_monoxide"?"co_mg_m3":"nh3_ug_m3";
+            const flag=field==="carbon_monoxide"?"co_valid":"nh3_valid";
+            const raw=hardware.data.map(r=>({timestamp:r.timestamp,[field]:r[key],sensor_valid:r[flag]}));
+            // Explicit empty boundaries keep offline/missing intervals visible.
+            const end=new Date(),start=new Date(end.getTime()-days*86400000);
+            raw.unshift({timestamp:start.toISOString(),[field]:null});
+            raw.push({timestamp:end.toISOString(),[field]:null});
+            chart(raw,svg,field,caption,true,hardware.sample_period_seconds*1500);
+          } else chart(h.data, svg, field, caption);
         }
         $("stats").replaceChildren(
           ...Object.entries(a.summary).map(([k, v]) =>
@@ -283,7 +303,7 @@ async function load() {
       $('alert-list').replaceChildren();
       for (const r of a.data) {
         const tr=document.createElement('tr');tr.style.borderLeft=`4px solid ${r.color}`;
-        for (const value of [time(r.timestamp),names[r.pollutant]||r.pollutant||'AQI',r.alert_type+' · '+r.severity,fmt(r.value)+' '+r.unit,fmt(r.threshold)+' '+r.unit+(r.averaging_hours?' · '+r.averaging_hours+'h':''),r.source,r.message]) {
+        for (const value of [time(r.measurement_timestamp||r.timestamp)+(r.status?' · started '+time(r.timestamp):''),names[r.pollutant]||r.pollutant||'AQI',r.alert_type+' · '+r.severity+(r.status?' · '+r.status:''),fmt(r.value)+' '+r.unit,fmt(r.threshold)+' '+r.unit+(r.averaging_hours?' · '+r.averaging_hours+'h':''),r.source+(r.device_id?' · '+r.device_id:''),r.message+(r.resolved_at?' Resolved: '+time(r.resolved_at):'')]) {
           const td=document.createElement('td');td.textContent=value;tr.append(td);
         }
         $('alert-list').append(tr);

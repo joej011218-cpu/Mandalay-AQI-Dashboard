@@ -206,6 +206,8 @@ def test_mqtt_secure_configuration_and_callbacks(hw_app,monkeypatch):
 def test_all_seven_rolling_threshold_sources_and_units(hw_app):
     at=current_hour();model_history(at);sensor_history(at)
     hw_app.config['ROLLING_ALERT_THRESHOLDS']={p:1 for p in combined.POLLUTANTS}
+    # Current hardware warnings require a fresh, valid latest observation.
+    now=datetime.now(timezone.utc);ingest(payload(now),received_at=now)
     events=hw_app.test_client().get('/api/monitoring/alerts?days=1').json['data']
     events=[e for e in events if e['alert_type']=='rolling-concentration']
     assert {e['pollutant'] for e in events}==set(combined.POLLUTANTS)

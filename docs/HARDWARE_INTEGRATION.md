@@ -1,5 +1,7 @@
 # Mandalay hardware monitoring integration
 
+For the current HTTPS architecture, diagnostic charts and persistent hardware alert episodes, see [Live, diagnostic history and persistent ESP32 alerts](HARDWARE_MONITORING.md). The implementation notes below describe the earlier integration stages.
+
 Work is confined to `feature/mandalay-hardware-integration`. No push, merge or Render deployment was performed. At initial integration no firmware or local XGBoost models were available. The user subsequently supplied working `main.cpp`; its calibration and sampling were inspected and preserved in `firmware/mandalay-esp32`. See that folder’s README for the complete corrected firmware, actual-payload verification and remaining broker setup. Hardware connectivity, calibration and the external prediction service were not verified. Historical example sensor numbers were never inserted into the application database.
 
 ## Sources and compatibility
