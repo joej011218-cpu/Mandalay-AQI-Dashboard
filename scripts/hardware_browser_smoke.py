@@ -46,6 +46,24 @@ with sync_playwright() as p:
             expect(page.locator('#status')).not_to_have_text(re.compile('Updating'),timeout=30000)
             expect(page.locator('#status')).not_to_have_class('error')
             expect(page.locator('#pollutant-charts svg')).to_have_count(7)
+        if path=='/about':
+            expect(page.get_by_role('heading',name='CPCB AQI CATEGORIES & PRECAUTIONS',exact=True)).to_have_count(1)
+            table=page.locator('#about .cpcb-categories table')
+            expect(table.locator('thead th')).to_have_count(4)
+            expect(table.locator('tbody tr')).to_have_count(6)
+            colors=['rgb(78, 159, 61)','rgb(168, 196, 58)','rgb(232, 197, 71)','rgb(232, 130, 60)','rgb(216, 69, 59)','rgb(122, 42, 42)']
+            for theme in ('dark','light'):
+                page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
+                assert table.locator('.cpcb-category').evaluate_all('(items)=>items.map(i=>getComputedStyle(i).color)')==colors
+                for width in (390,1440):
+                    page.set_viewport_size({'width':width,'height':1000})
+                    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),'About page overflow'
+                    region=page.locator('#about .cpcb-categories')
+                    region.evaluate('(box)=>box.scrollLeft=box.scrollWidth')
+                    assert region.evaluate('(box)=>box.scrollLeft+box.clientWidth>=box.scrollWidth-2')
+                    region.evaluate('(box)=>box.scrollLeft=0')
+                    page.screenshot(path=str(out/f'about-{theme}-{width}.png'),full_page=True)
+            page.set_viewport_size({'width':1440,'height':1000})
         page.screenshot(path=str(out/(path.strip('/') or 'live')).strip()+'.png',full_page=True)
         print(path,page.locator('#status').inner_text())
     page.set_viewport_size({'width':390,'height':844});page.goto(base+'/')

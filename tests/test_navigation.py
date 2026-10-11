@@ -39,3 +39,18 @@ def test_live_omits_only_requested_sections():
     analytics = client.get('/analytics').get_data(as_text=True)
     assert '<option value="30">30D</option>' in analytics
     assert 'id="pollutant-charts"' in analytics
+
+
+def test_about_category_guide():
+    client = create_app({'SQLALCHEMY_DATABASE_URI':
+        'postgresql+psycopg://unused:unused@localhost/unused', 'TESTING': True}).test_client()
+    html = client.get('/about').get_data(as_text=True)
+    assert html.count('CPCB AQI CATEGORIES &amp; PRECAUTIONS') == 1
+    assert '<h3>CPCB categories</h3>' not in html
+    for header in ('CATEGORY', 'AQI RANGE', 'HEALTH IMPACT', 'PRACTICAL PRECAUTIONS'):
+        assert f'<th scope="col">{header}</th>' in html
+    for value in ('0–50','51–100','101–200','201–300','301–400','401–500'):
+        assert value in html
+    assert 'not individualized medical advice' in html
+    for preserved in ('Hardware monitoring', 'Data & methodology', 'Open-ended Severe'):
+        assert preserved in html

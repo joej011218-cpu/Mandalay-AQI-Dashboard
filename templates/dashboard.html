@@ -178,6 +178,24 @@
             stale. This service supports planning and does not replace official
             health advice.
           </p>
+          {% if request.path == '/about' %}
+          <h3>CPCB AQI CATEGORIES &amp; PRECAUTIONS</h3>
+          <p>The dashboard uses six AQI categories from Good to Severe. The table below explains the AQI range, likely health impact, and practical precautions associated with each category.</p>
+          <div class="table-wrap cpcb-categories" tabindex="0" role="region" aria-label="CPCB AQI categories and precautions; scroll horizontally on smaller screens">
+            <table>
+              <thead><tr><th scope="col">CATEGORY</th><th scope="col">AQI RANGE</th><th scope="col">HEALTH IMPACT</th><th scope="col">PRACTICAL PRECAUTIONS</th></tr></thead>
+              <tbody>
+                <tr><td><span class="cpcb-category good">Good</span></td><td>0–50</td><td>Minimal impact. Air quality is considered good for normal daily activities.</td><td>Normal outdoor activities can continue. Outdoor exercise and recreation can continue as usual.</td></tr>
+                <tr><td><span class="cpcb-category satisfactory">Satisfactory</span></td><td>51–100</td><td>Air quality is generally acceptable. Sensitive people may experience minor breathing discomfort.</td><td>Normal activities can continue for most people. Sensitive people should monitor for breathing discomfort and reduce prolonged or strenuous outdoor exertion if discomfort occurs.</td></tr>
+                <tr><td><span class="cpcb-category moderate">Moderate</span></td><td>101–200</td><td>Breathing discomfort may occur in people with lung, asthma, or heart conditions, especially during prolonged exposure.</td><td>Sensitive groups should consider reducing prolonged or strenuous outdoor activity, take additional breaks, and move indoors if breathing discomfort occurs.</td></tr>
+                <tr><td><span class="cpcb-category poor">Poor</span></td><td>201–300</td><td>Prolonged exposure may cause breathing discomfort, particularly for people with respiratory or heart conditions.</td><td>Reduce prolonged or strenuous outdoor physical activity. Sensitive groups should minimize outdoor exertion and consider moving strenuous activities indoors.</td></tr>
+                <tr><td><span class="cpcb-category very-poor">Very Poor</span></td><td>301–400</td><td>Prolonged exposure can cause respiratory illness or significant breathing discomfort.</td><td>Avoid strenuous outdoor physical activity. Sensitive groups should remain indoors as much as practical and keep outdoor exposure as short as reasonably possible.</td></tr>
+                <tr><td><span class="cpcb-category severe">Severe</span></td><td>401–500</td><td>Air quality may affect healthy people and can seriously affect people with existing respiratory or cardiovascular conditions.</td><td>Avoid outdoor physical activity where possible. Minimize outdoor exposure, especially for sensitive groups, and move strenuous activities indoors.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="category-note"><strong>Note:</strong> AQI ranges follow the CPCB category structure used by the dashboard. Precaution text is general guidance and is not individualized medical advice.</p>
+          {% else %}
           <h3>CPCB categories</h3>
           <div class="table-wrap cpcb-categories">
             <table>
@@ -215,6 +233,7 @@
               </tbody>
             </table>
           </div>
+          {% endif %}
           <p>
             The modeled workbook has six pollutants and no measured hardware history; monitoring adds NH₃ from actual saved ESP32 observations. Pb remains unavailable. At least 16/24
             valid hours are required per pollutant; this application
