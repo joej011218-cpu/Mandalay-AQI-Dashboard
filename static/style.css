@@ -560,3 +560,7 @@ html[data-page="analytics"] .sensor-point { vector-effect: non-scaling-stroke; }
   html[data-page="analytics"] .chart-grid { grid-template-columns: minmax(0,1fr); }
   html[data-page="analytics"] #analytics .chart-box { padding: 16px; }
 }
+
+/* Keep every midnight tick accessible without widening the page itself. */
+html[data-page="analytics"] .daily-chart-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
+html[data-page="analytics"] .daily-chart-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

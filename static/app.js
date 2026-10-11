@@ -112,16 +112,46 @@ function hourlyTicks(start,end,width,labelWidth=70,minHours=1) {
   for(let at=first;at<=end;at+=interval)timestamps.push(at);
   return {timestamps,step};
 }
+function dailyTicks(start,end) {
+  const day=86400000,offset=6.5*3600000;
+  const timestamps=[];
+  for(let at=Math.ceil((start+offset)/day)*day-offset;at<=end;at+=day)timestamps.push(at);
+  return {timestamps,step:24};
+}
 function analyticsTimeAxis(svg,axis,start,end) {
   axis.replaceChildren();axis.classList.add("hourly-time-axis");
+  const daily=Number($("days").value)!==1;
+  const box=svg.parentElement;
+  box.classList.toggle("daily-chart-scroll",daily);
+  if(daily){
+    const width=Math.max(box.clientWidth-40,Math.ceil((end-start)/86400000)*72*900/820);
+    svg.style.width=width+"px";svg.style.height="260px";
+    svg.setAttribute("preserveAspectRatio","none");axis.style.width=width+"px";
+    box.setAttribute("tabindex","0");box.setAttribute("aria-label","Chart with daily Yangon dates; scroll horizontally to inspect all days");
+  } else {
+    svg.style.removeProperty("width");svg.style.removeProperty("height");axis.style.removeProperty("width");
+    svg.removeAttribute("preserveAspectRatio");box.removeAttribute("tabindex");box.removeAttribute("aria-label");
+  }
   const rect=svg.getBoundingClientRect();
   const scale=Math.min(rect.width/900,rect.height/260);
-  const inset=(rect.width-900*scale)/2;
+  const inset=daily?0:(rect.width-900*scale)/2;
+  const timeScale=daily?rect.width/900:scale;
+  // Horizontal expansion must not stretch the labels or sensor markers.
+  for(const label of svg.querySelectorAll("text")){
+    if(daily)label.setAttribute("transform",`scale(${1/timeScale},1)`);
+    else label.removeAttribute("transform");
+  }
+  for(const dot of svg.querySelectorAll("circle")){
+    if(daily){
+      const cx=dot.getAttribute("cx"),cy=dot.getAttribute("cy");
+      dot.setAttribute("transform",`translate(${cx},${cy}) scale(${1/timeScale},1) translate(${-cx},${-cy})`);
+    } else dot.removeAttribute("transform");
+  }
+
   // SVG viewBox scaling must not shrink the Y-axis labels on phones.
   for(const label of svg.querySelectorAll("text"))label.setAttribute("font-size",Math.min(40,12/Math.max(.1,scale)));
-  const period=Number($("days").value);
-  const mode=period===1?"time":period===7?"date-time":"date";
-  const ticks=hourlyTicks(start,end,820*scale,mode==="date-time"?145:mode==="date"?80:70,mode==="time"?1:mode==="date-time"?12:24);
+  const mode=daily?"date":"time";
+  const ticks=daily?dailyTicks(start,end):hourlyTicks(start,end,820*scale);
   const formatter=new Intl.DateTimeFormat("en-US",{
     timeZone:"Asia/Yangon",
     ...(mode!=="time"?{month:"short",day:"numeric"}:{}),
@@ -131,7 +161,7 @@ function analyticsTimeAxis(svg,axis,start,end) {
   for(const at of ticks.timestamps) {
     const tick=document.createElement("span"),label=document.createElement("span");
     tick.dataset.timestamp=new Date(at).toISOString();
-    const left=inset+(40+(at-start)/Math.max(3600000,end-start)*820)*scale;
+    const left=inset+(40+(at-start)/Math.max(3600000,end-start)*820)*timeScale;
     tick.style.left=left+"px";tick.title=measurementTime(at);
     label.textContent=formatter.format(at);tick.append(label);axis.append(tick);
     // Keep text inside the chart while its small tick marker stays at the
@@ -227,6 +257,16 @@ function chart(
     tooltip=document.createElement("div");tooltip.className="sensor-tooltip";
     tooltip.setAttribute("role","tooltip");tooltip.hidden=true;
     svg.parentElement.append(tooltip);
+    // Keep tooltips in the visible card when its daily timeline is scrolled.
+    const box=svg.parentElement;
+    if(analytics)box.onscroll=()=>{
+      if(box.classList.contains("daily-chart-scroll")){
+        tooltip.style.left=(box.scrollLeft+12)+"px";tooltip.style.right="auto";
+        tooltip.style.width=Math.max(0,box.clientWidth-24)+"px";tooltip.style.boxSizing="border-box";
+      }
+    };
+    if(analytics)box.onscroll();
+
   }
   let previous,segment=[];
   const drawSegment=()=>{

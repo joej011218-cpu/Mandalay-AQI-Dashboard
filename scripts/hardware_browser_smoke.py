@@ -39,7 +39,7 @@ with sync_playwright() as p:
             expect(page.locator('#pollutant-charts svg')).to_have_count(7)
             expect(page.locator('#pollutant-charts .chart-time-axis')).to_have_count(7)
             for axis in page.locator('#pollutant-charts .chart-time-axis').all():
-                expect(axis).to_contain_text(re.compile(r'\d.*(?:am|pm)',re.I))
+                expect(axis).to_contain_text(re.compile(r'[A-Z][a-z]{2} \d{1,2}'))
             with page.expect_response(lambda r:'/api/monitoring/history?' in r.url and 'view=daily' in r.url):
                 page.select_option('#view','daily')
             expect(page.locator('#status')).not_to_have_text(re.compile('Updating'),timeout=30000)
@@ -111,7 +111,7 @@ with sync_playwright() as p:
     expect(co_chart.locator('polyline[stroke-dasharray="4 3"]')).to_have_count(1)
     expect(co_chart.locator('p')).to_contain_text('diagnostic only — not AQI eligible')
     expect(co_chart.locator('circle').first.locator('title')).to_contain_text('Valid estimate · ESP32')
-    expect(co_chart.locator('.chart-time-axis')).to_contain_text(re.compile(r'\d.*(?:am|pm)',re.I))
+    expect(co_chart.locator('.chart-time-axis')).to_contain_text(re.compile(r'[A-Z][a-z]{2} \d{1,2}'))
     # Long offline gap must not be connected (two short segments only).
     expect(co_chart.locator('polyline[stroke-width="2"]')).to_have_count(2)
     with page.expect_response(lambda r:'/api/hardware/history?days=1' in r.url):
@@ -168,9 +168,9 @@ with sync_playwright() as p:
         assert str(value) in titles[index] and 'Outside calibrated range' in titles[index]
         expected=page.evaluate('(v)=>new Date(v).toLocaleString("en-GB",{timeZone:"Asia/Yangon",dateStyle:"medium",timeStyle:"medium"})',raw['data'][index]['timestamp'])
         assert expected in titles[index]
-    assert page.locator('#days option').all_text_contents()==['24H','7D','20D']
+    assert page.locator('#days option').all_text_contents()==['24H','7D','30D']
     # Every selected range keeps raw observations and adaptive calendar axes.
-    for period in ('1','7','20'):
+    for period in ('1','7','30'):
         with page.expect_response(lambda r:'/api/hardware/history?days='+period in r.url):
             page.select_option('#days',period)
         expect(page.locator('#hardware-window')).to_have_value('period')
@@ -178,7 +178,7 @@ with sync_playwright() as p:
         expect(nh3_chart.locator('circle[data-valid="true"]')).to_have_count(4)
         expect(page.locator('.hourly-time-axis')).to_have_count(8)
         labels=page.locator('.hourly-time-axis > span').all_text_contents()
-        pattern=r'\d{1,2} (AM|PM)' if period=='1' else r'[A-Z][a-z]{2} \d{1,2}, \d{1,2} (AM|PM)' if period=='7' else r'[A-Z][a-z]{2} \d{1,2}'
+        pattern=r'\d{1,2} (AM|PM)' if period=='1'  else r'[A-Z][a-z]{2} \d{1,2}'
         assert labels and all(re.fullmatch(pattern,label) for label in labels),labels
         for width in (390,1440):
             page.set_viewport_size({'width':width,'height':1000})
@@ -189,11 +189,23 @@ with sync_playwright() as p:
         for stamp in stamps:
             local=page.evaluate('(v)=>new Date(Date.parse(v)+6.5*3600000).toISOString()',stamp)
             assert local[14:19]=='00:00',local
-            if period=='20':assert local[11:13]=='00',local
+            if period!='1':assert local[11:13]=='00',local
+        if period!='1':
+            axes=page.locator('.hourly-time-axis').evaluate_all('(axes)=>axes.map(a=>[...a.children].map(t=>Date.parse(t.dataset.timestamp)))')
+            assert all(all(row[i+1]-row[i]==86400000 for i in range(len(row)-1)) for row in axes)
+            assert len(axes[-1])==int(period),axes[-1]
+            for box in page.locator('.daily-chart-scroll').all():
+                box.evaluate('(box)=>box.scrollLeft=box.scrollWidth')
+                assert box.evaluate('(box)=>box.scrollLeft+box.clientWidth>=box.scrollWidth-2')
+                box.evaluate('(box)=>box.scrollLeft=0')
         co_chart.locator('circle').first.focus()
         expect(co_chart.locator('[role="tooltip"]')).to_contain_text('0.332 mg/m³')
         expect(co_chart.locator('[role="tooltip"]')).to_contain_text('Outside calibrated range — not AQI eligible · ESP32')
         expect(co_chart.locator('[role="tooltip"]')).to_contain_text(page.evaluate('(v)=>measurementTime(v)',raw['data'][0]['timestamp']))
+        if period!='1':
+            page.wait_for_timeout(100)
+            assert co_chart.evaluate('(box)=>{const tip=box.querySelector("[role=tooltip]").getBoundingClientRect(),card=box.getBoundingClientRect();return tip.left>=card.left && tip.right<=card.right+1}')
+
     page.set_viewport_size({'width':1440,'height':1000})
     page.evaluate('document.documentElement.dataset.theme="dark"')
     page.screenshot(path='/tmp/mandalay-analytics-desktop.png',full_page=True)
