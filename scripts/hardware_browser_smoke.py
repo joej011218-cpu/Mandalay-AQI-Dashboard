@@ -1,6 +1,7 @@
 """Smoke-test monitoring UI; requires Playwright and Chromium, no data writes."""
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from playwright.sync_api import sync_playwright, expect
 base=os.getenv('DASHBOARD_BASE_URL','http://127.0.0.1:5010')
@@ -38,7 +39,7 @@ with sync_playwright() as p:
             expect(page.locator('#pollutant-charts svg')).to_have_count(7)
             expect(page.locator('#pollutant-charts .chart-time-axis')).to_have_count(7)
             for axis in page.locator('#pollutant-charts .chart-time-axis').all():
-                expect(axis).to_contain_text(re.compile(r'\d.*(?:am|pm)'))
+                expect(axis).to_contain_text(re.compile(r'\d.*(?:am|pm)',re.I))
             with page.expect_response(lambda r:'/api/monitoring/history?' in r.url and 'view=daily' in r.url):
                 page.select_option('#view','daily')
             expect(page.locator('#status')).not_to_have_text(re.compile('Updating'),timeout=30000)
@@ -111,7 +112,7 @@ with sync_playwright() as p:
     expect(co_chart.locator('line[stroke-dasharray="4 3"]')).to_have_count(1)
     expect(co_chart.locator('p')).to_contain_text('diagnostic only — not AQI eligible')
     expect(co_chart.locator('circle').first.locator('title')).to_contain_text('Valid estimate · ESP32')
-    expect(co_chart.locator('.chart-time-axis')).to_contain_text(re.compile(r'\d.*(?:am|pm)'))
+    expect(co_chart.locator('.chart-time-axis')).to_contain_text(re.compile(r'\d.*(?:am|pm)',re.I))
     # Long offline gap must not be connected (two short segments only).
     expect(co_chart.locator('line[stroke-width="2"]')).to_have_count(2)
     with page.expect_response(lambda r:'/api/hardware/history?days=1' in r.url):
@@ -156,6 +157,48 @@ with sync_playwright() as p:
     expect(co_chart.locator('circle')).to_have_count(0)
     raw['data']=saved_observations
     page.set_viewport_size({'width':1440,'height':1000})
+    # Clock ticks use UTC+06:30 boundaries, independent of sample minutes.
+    aligned=page.evaluate('()=>hourlyTicks(Date.parse("2026-10-11T12:39:00+06:30"),Date.parse("2026-10-11T18:39:00+06:30"),900)')
+    assert aligned['step']==1 and len(aligned['timestamps'])==6
+    assert all(datetime.fromtimestamp(t/1000,timezone.utc).minute==30 for t in aligned['timestamps'])
+    for width in (240,500,900):
+        result=page.evaluate('(width)=>hourlyTicks(Date.parse("2026-10-11T00:39:00+06:30"),Date.parse("2026-10-12T00:39:00+06:30"),width)',width)
+        assert result['dated'] and result['step'] in (3,6,12,24)
+        assert len(result['timestamps'])<=max(1,width//130)+1
+    long=page.evaluate('()=>hourlyTicks(Date.parse("2026-10-01T02:39:00+06:30"),Date.parse("2026-10-31T03:39:00+06:30"),300)')
+    assert long['step']>=24 and long['step']%24==0
+    fixed=[dict(timestamp='2026-10-11T12:39:00+06:30',carbon_monoxide=None),
+           dict(timestamp='2026-10-11T12:54:00+06:30',carbon_monoxide=0.332,sensor_valid=False,validity_label='Outside calibrated range — not AQI eligible',device_id='node1'),
+           dict(timestamp='2026-10-11T13:09:00+06:30',carbon_monoxide=0.328,sensor_valid=False,validity_label='Outside calibrated range — not AQI eligible',device_id='node1'),
+           dict(timestamp='2026-10-11T13:24:00+06:30',carbon_monoxide=None),
+           dict(timestamp='2026-10-11T16:09:00+06:30',carbon_monoxide=0.33,sensor_valid=False,validity_label='Outside calibrated range — not AQI eligible',device_id='node1'),
+           dict(timestamp='2026-10-11T18:39:00+06:30',carbon_monoxide=None)]
+    svg=co_chart.locator('svg')
+    svg.evaluate('(svg,rows)=>chart(rows,svg,"carbon_monoxide",svg.parentElement.querySelector("p"),true,900*1500)',fixed)
+    expect(co_chart.locator('circle')).to_have_count(3)
+    expect(co_chart.locator('line[stroke-dasharray="4 3"]')).to_have_count(1)
+    expect(co_chart.locator('circle').first.locator('title')).to_contain_text('12:54:00')
+    first_x=co_chart.locator('circle').first.get_attribute('cx')
+    assert abs(float(first_x)-(40+15/360*820))<0.001,'Measurements moved to hourly boundaries'
+    for width in (1440,390):
+        page.set_viewport_size({'width':width,'height':1000})
+        page.wait_for_function('(svg)=>svg.nextElementSibling.dataset.intervalHours!==undefined',arg=svg.element_handle())
+        # Wait until resize callback positions the anchors in current SVG pixels.
+        page.wait_for_function('(svg)=>{const axis=svg.nextElementSibling,rect=svg.getBoundingClientRect(),scale=Math.min(rect.width/900,rect.height/260),inset=(rect.width-900*scale)/2,start=Date.parse("2026-10-11T12:39:00+06:30"),span=6*3600000;return [...axis.children].every(t=>Math.abs(parseFloat(t.style.left)-(inset+(40+(Date.parse(t.dataset.timestamp)-start)/span*820)*scale))<.5)}',arg=svg.element_handle())
+        ticks=co_chart.locator('.hourly-time-axis > span').evaluate_all('(ticks)=>ticks.map(t=>({at:t.dataset.timestamp,text:t.textContent,left:parseFloat(t.style.left)}))')
+        assert ticks and all(':00' in t['text'] for t in ticks)
+        assert all(datetime.fromisoformat(t['at'].replace('Z','+00:00')).minute==30 for t in ticks)
+        assert co_chart.locator('circle').first.get_attribute('cx')==first_x
+        assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'),'Hourly labels overflow mobile layout'
+        labels=co_chart.locator('.hourly-time-axis > span > span').evaluate_all('(labels)=>labels.map(t=>{const r=t.getBoundingClientRect();return {left:r.left,right:r.right}})')
+        assert all(labels[i]['right']<=labels[i+1]['left']+1 for i in range(len(labels)-1)),'Hourly labels overlap'
+    midnight=[dict(timestamp='2026-10-11T22:00:00+06:30',carbon_monoxide=None),dict(timestamp='2026-10-12T02:00:00+06:30',carbon_monoxide=None)]
+    svg.evaluate('(svg,rows)=>chart(rows,svg,"carbon_monoxide",svg.parentElement.querySelector("p"),true)',midnight)
+    expect(co_chart.locator('.hourly-time-axis')).to_contain_text('Oct 12')
+    expect(co_chart.locator('.hourly-time-axis')).to_contain_text('12:00 AM')
+    midnight_labels=co_chart.locator('.hourly-time-axis > span > span').evaluate_all('(labels)=>labels.map(t=>{const r=t.getBoundingClientRect();return {left:r.left,right:r.right}})')
+    assert all(midnight_labels[i]['right']<=midnight_labels[i+1]['left']+1 for i in range(len(midnight_labels)-1)),'Midnight date labels overlap'
+    page.set_viewport_size({'width':1440,'height':1000})
     # Persisted alert status, diagnostic warning and resolved history render.
     alerts={'aqi_standard':raw['aqi_standard'],'data':[
         dict(timestamp=raw['data'][0]['timestamp'],pollutant='carbon_monoxide',alert_type='sensor-quality',
@@ -182,4 +225,4 @@ with sync_playwright() as p:
     assert all(url.startswith(base+'/') for url in urls),urls
     assert not any('/api/latest' in url or 'vadodara' in url.lower() for url in urls),urls
     browser.close()
-    print('PASS: seven source-labeled cards/charts, empty-chart date axes, daily/period filters, recent hardware views/exact tooltips, removed history/statistics sections, diagnostic valid/invalid hardware, alert statuses, missing hardware, theme/mobile, CPCB rejection, no JS errors.')
+    print('PASS: seven source-labeled cards/charts, empty-chart date axes, daily/period filters, hourly Yangon ticks/alignment/midnight/responsive widths, recent hardware views/exact tooltips, removed history/statistics sections, diagnostic valid/invalid hardware, alert statuses, missing hardware, theme/mobile, CPCB rejection, no JS errors.')

@@ -95,6 +95,59 @@ let activeSensorTooltip;
 document.addEventListener("pointerdown",event=>{
   if(activeSensorTooltip && !activeSensorTooltip.box.contains(event.target))activeSensorTooltip.dismiss();
 });
+// Yangon has a fixed UTC+06:30 offset; tick times never alter observations.
+const analyticsAxes=new Map();
+function hourlyTicks(start,end,width) {
+  const hour=3600000,offset=6.5*hour,day=24*hour;
+  const dated=Math.floor((start+offset)/day)!==Math.floor((end+offset)/day);
+  const slots=Math.max(1,Math.floor(width/(dated?160:90)));
+  const minimum=(end-start)/hour/slots;
+  const steps=[1,2,3,6,12,24,48,72,168,336,720,1440,2880,4320,8760];
+  const step=steps.find(v=>v>=minimum)||Math.ceil(minimum/24)*24;
+  const interval=step*hour;
+  // Multiples >=24 hours align to Yangon midnight; shorter ones align to
+  // local clock hours (e.g. 00:00, 03:00, 06:00 for a three-hour interval).
+  const first=Math.ceil((start+offset)/interval)*interval-offset;
+  const timestamps=[];
+  for(let at=first;at<=end;at+=interval)timestamps.push(at);
+  return {timestamps,dated,step};
+}
+function analyticsTimeAxis(svg,axis,start,end) {
+  axis.replaceChildren();axis.classList.add("hourly-time-axis");
+  const rect=svg.getBoundingClientRect();
+  const scale=Math.min(rect.width/900,rect.height/260);
+  const inset=(rect.width-900*scale)/2;
+  const ticks=hourlyTicks(start,end,820*scale);
+  const formatter=new Intl.DateTimeFormat("en-US",{
+    timeZone:"Asia/Yangon",hour:"numeric",minute:"2-digit",hour12:true,
+    ...(ticks.dated?{month:"short",day:"numeric"}:{}),
+  });
+  axis.dataset.intervalHours=String(ticks.step);
+  for(const at of ticks.timestamps) {
+    const tick=document.createElement("span"),label=document.createElement("span");
+    tick.dataset.timestamp=new Date(at).toISOString();
+    const left=inset+(40+(at-start)/Math.max(3600000,end-start)*820)*scale;
+    tick.style.left=left+"px";tick.title=measurementTime(at);
+    label.textContent=formatter.format(at);tick.append(label);axis.append(tick);
+    // Keep text inside the chart while its small tick marker stays at the
+    // exact SVG time coordinate, including SVG letterboxing on wide screens.
+    const labelWidth=label.getBoundingClientRect().width;
+    const labelLeft=Math.max(0,Math.min(rect.width-labelWidth,left-labelWidth/2));
+    label.style.left=(labelLeft-left)+"px";
+  }
+}
+let axisResizePending=false;
+window.addEventListener("resize",()=>{
+  if(page!=="/analytics" || axisResizePending)return;
+  axisResizePending=true;
+  requestAnimationFrame(()=>{
+    axisResizePending=false;
+    for(const [svg,state] of analyticsAxes){
+      if(!svg.isConnected)analyticsAxes.delete(svg);
+      else analyticsTimeAxis(svg,...state);
+    }
+  });
+});
 function chart(
   rows,
   svg = $("chart"),
@@ -118,17 +171,23 @@ function chart(
 
   const start = new Date(rows[0].timestamp).getTime(),
     end = new Date(rows.at(-1).timestamp).getTime();
-  const tickFormat = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Yangon", month:"short",day:"numeric",hour: "numeric", minute: "2-digit", hour12: true,
-  });
-  const ticks=Math.min(5,rows.length);
-  for (let i = 0; i < ticks; i++) {
-    const row = rows[Math.round((i * (rows.length - 1)) / Math.max(1,ticks-1))];
-    const label = document.createElement("span");
-    const tick=diagnostic?new Date(start+(end-start)*i/Math.max(1,ticks-1)):new Date(row.timestamp);
-    label.textContent = tickFormat.format(tick).toLowerCase();
-    label.title = time(tick);
-    axis.append(label);
+  if(page==="/analytics") {
+    for(const svg of analyticsAxes.keys())if(!svg.isConnected)analyticsAxes.delete(svg);
+    analyticsAxes.set(svg,[axis,start,end]);
+    analyticsTimeAxis(svg,axis,start,end);
+  } else {
+    const tickFormat = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Yangon", month:"short",day:"numeric",hour: "numeric", minute: "2-digit", hour12: true,
+    });
+    const ticks=Math.min(5,rows.length);
+    for (let i = 0; i < ticks; i++) {
+      const row = rows[Math.round((i * (rows.length - 1)) / Math.max(1,ticks-1))];
+      const label = document.createElement("span");
+      const tick=diagnostic?new Date(start+(end-start)*i/Math.max(1,ticks-1)):new Date(row.timestamp);
+      label.textContent = tickFormat.format(tick).toLowerCase();
+      label.title = time(tick);
+      axis.append(label);
+    }
   }
   if (!points.length) {caption.textContent="No covered observations; gaps are not filled.";return;}
   const max = Math.max(field === "cpcb_aqi" ? 50 : 1, ...points.map((r) => r[field]));

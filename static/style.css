@@ -529,3 +529,12 @@ summary {
 @media (max-width: 600px) {
   .sensor-tooltip { left: 2%; right: 2%; font-size: 12px; }
 }
+
+/* Analytics clock ticks share the SVG's time coordinates; Live keeps its axis. */
+.hourly-time-axis { position: relative; display: block; padding: 4px 0 0; min-height: 22px; }
+.hourly-time-axis > span { position: absolute; top: 4px; width: 0; }
+.hourly-time-axis > span::before { content: ""; position: absolute; top: -5px; left: 0; height: 4px; border-left: 1px solid var(--muted); }
+.hourly-time-axis > span > span { position: absolute; display: inline-block; width: max-content; }
+@media (max-width: 600px) {
+  .hourly-time-axis > span:nth-child(2), .hourly-time-axis > span:nth-child(4) { display: block; }
+}
