@@ -79,6 +79,41 @@ async function api(path) {
     throw new Error("Unexpected AQI standard; CPCB data is required.");
   return data;
 }
+const exact = v => typeof v === "number" && Number.isFinite(v) ? String(v) : "—";
+const measurementTime = v => new Date(v).toLocaleString("en-GB", {
+  timeZone:"Asia/Yangon", dateStyle:"medium", timeStyle:"medium",
+}) + " · Asia/Yangon";
+function hardwareValidity(row, field) {
+  if (field === "carbon_monoxide" && row.validity?.co_range_valid === false)
+    return "Outside calibrated range — not AQI eligible";
+  const key=field === "carbon_monoxide"?"co_mg_m3":"nh3_ug_m3";
+  if (exact(row[key]) === "—") return "Unavailable — not AQI eligible";
+  return row[field === "carbon_monoxide"?"co_valid":"nh3_valid"] === true
+    ? "Valid estimate" : "Invalid — not AQI eligible";
+}
+let hardwareRows=[],hardwareTablePage=0;
+const hardwarePageSize=50;
+function hardwareTable() {
+  const rows=[...hardwareRows].reverse();
+  const start=hardwareTablePage*hardwarePageSize;
+  $("hardware-history-rows").replaceChildren();
+  for (const row of rows.slice(start,start+hardwarePageSize)) {
+    const tr=document.createElement("tr");
+    for (const value of [measurementTime(row.timestamp),exact(row.co_mg_m3),exact(row.nh3_ug_m3),
+      hardwareValidity(row,"carbon_monoxide"),hardwareValidity(row,"ammonia"),row.device_id]) {
+      const td=document.createElement("td");td.textContent=value;tr.append(td);
+    }
+    $("hardware-history-rows").append(tr);
+  }
+  $("hardware-history-empty").hidden=rows.length>0;
+  $("hardware-page").textContent=rows.length?`${start+1}–${Math.min(rows.length,start+hardwarePageSize)} of ${rows.length}`:"0 measurements";
+  $("hardware-previous").disabled=hardwareTablePage===0;
+  $("hardware-next").disabled=start+hardwarePageSize>=rows.length;
+}
+let activeSensorTooltip;
+document.addEventListener("pointerdown",event=>{
+  if(activeSensorTooltip && !activeSensorTooltip.box.contains(event.target))activeSensorTooltip.dismiss();
+});
 function chart(
   rows,
   svg = $("chart"),
@@ -88,6 +123,7 @@ function chart(
   maxGapMs = 5400000,
 ) {
   svg.replaceChildren();
+  svg.parentElement.querySelector(".sensor-tooltip")?.remove();
   let axis = svg.nextElementSibling;
   if (!axis || !axis.classList.contains("chart-time-axis")) {
     axis = document.createElement("div");
@@ -108,8 +144,9 @@ function chart(
   for (let i = 0; i < ticks; i++) {
     const row = rows[Math.round((i * (rows.length - 1)) / Math.max(1,ticks-1))];
     const label = document.createElement("span");
-    label.textContent = tickFormat.format(new Date(row.timestamp)).toLowerCase();
-    label.title = time(row.timestamp);
+    const tick=diagnostic?new Date(start+(end-start)*i/Math.max(1,ticks-1)):new Date(row.timestamp);
+    label.textContent = tickFormat.format(tick).toLowerCase();
+    label.title = time(tick);
     axis.append(label);
   }
   if (!points.length) {caption.textContent="No covered observations; gaps are not filled.";return;}
@@ -136,6 +173,14 @@ function chart(
       "font-size": 12,
     }).textContent = fmt((max * i) / 4);
   }
+  let tooltip,pinned=false;
+  const dismiss=()=>{pinned=false;if(tooltip)tooltip.hidden=true;};
+  const sensorTargets=[];
+  if (diagnostic) {
+    tooltip=document.createElement("div");tooltip.className="sensor-tooltip";
+    tooltip.setAttribute("role","tooltip");tooltip.hidden=true;
+    svg.parentElement.append(tooltip);
+  }
   let previous;
   for (const r of rows) {
     if (r[field] == null) {
@@ -159,7 +204,9 @@ function chart(
     const dot = add("circle", {
       cx: x(r),
       cy: y(r),
-      r: 2,
+      r: diagnostic ? 5 : 2,
+      stroke: diagnostic ? "var(--bg)" : "none",
+      "stroke-width": diagnostic ? 1.5 : 0,
       fill: diagnostic && !r.sensor_valid ? "#E8C547" : "var(--accent)",
       "data-valid": diagnostic ? String(r.sensor_valid) : "covered",
     });
@@ -169,9 +216,51 @@ function chart(
     );
     title.textContent = `${time(r.timestamp)} · ${field === "cpcb_aqi" ? "AQI" : names[field]} ${diagnostic ? estimate(r[field]) : fmt(r[field])}${diagnostic ? " " + unit(field) + " · ESP32 · " + (r.sensor_valid ? "valid estimate" : "invalid estimate — not AQI eligible") : ""}`;
     dot.append(title);
+    if (diagnostic) {
+      const detail=`${names[field]} ${exact(r[field])} ${unit(field)}\n${measurementTime(r.timestamp)}\n${r.validity_label} · ESP32\nDevice: ${r.device_id}`;
+      title.textContent=detail;
+      dot.classList.add("sensor-point");dot.setAttribute("tabindex","0");
+      dot.setAttribute("role","button");dot.setAttribute("aria-label",detail);
+      const show=()=>{
+        if(activeSensorTooltip?.tooltip!==tooltip)activeSensorTooltip?.dismiss();
+        activeSensorTooltip={tooltip,box:svg.parentElement,dismiss};
+        tooltip.textContent=detail;tooltip.hidden=false;
+      };
+      const hide=()=>{if(!pinned)tooltip.hidden=true;};
+      sensorTargets.push({dot,show,x:x(r),y:y(r)});
+      dot.addEventListener("pointerenter",show);
+      dot.addEventListener("pointermove",show);dot.addEventListener("pointerleave",event=>{if(event.pointerType!=="touch")hide();});
+      dot.addEventListener("focus",show);dot.addEventListener("blur",hide);
+      dot.addEventListener("click",()=>{pinned=true;show();});
+      dot.addEventListener("keydown",event=>{
+        if(event.key==="Escape")dismiss();
+        if(event.key==="Enter" || event.key===" "){event.preventDefault();pinned=true;show();}
+      });
+    }
     previous = r;
   }
-  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Raw samples use the period filter; daily view applies to covered-hour charts and statistics." : ""}`;
+  if (diagnostic) {
+    // A small screen scales SVG dots down. Permit nearby pointer/touch inspection
+    // in screen pixels without adding fabricated points or changing their times.
+    const inspectPoint=event=>{
+      const matrix=svg.getScreenCTM();
+      if(!matrix)return;
+      let nearest,distance=Infinity;
+      for(const target of sensorTargets){
+        const dx=event.clientX-(matrix.a*target.x+matrix.c*target.y+matrix.e);
+        const dy=event.clientY-(matrix.b*target.x+matrix.d*target.y+matrix.f);
+        const d=dx*dx+dy*dy;
+        if(d<distance){distance=d;nearest=target;}
+      }
+      if(nearest && distance<=(event.pointerType==="touch"?24*24:12*12)){
+        if(event.pointerType==="touch")pinned=true;
+        nearest.show();
+      } else if(!pinned)tooltip.hidden=true;
+    };
+    svg.onpointermove=inspectPoint;svg.onpointerdown=inspectPoint;
+    svg.onpointerleave=event=>{if(event.pointerType!=="touch" && !pinned)tooltip.hidden=true;};
+  }
+  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Hover, focus or tap a point for its exact measurement. The ESP32 view applies to raw samples; daily view applies to covered-hour charts and statistics." : ""}`;
 }
 let loading = false;
 async function load() {
@@ -181,6 +270,7 @@ async function load() {
     return;
   }
   loading = true;
+  if(page==="/analytics")$("hardware-window").disabled=true;
   $("status").classList.remove("error");
   $("status").textContent = "Updating Mandalay observations…";
   try {
@@ -251,7 +341,13 @@ async function load() {
           card("Best AQI", fmt(v.min), "Selected period"),
           card("AQI readings", String(v.count), "Eligible calculated hours"),
         );
-        const hardware = await api(`/api/hardware/history?days=${days}`);
+        const windowHours=$("hardware-window").value;
+        const hardwareDays=windowHours==="period"?days:Math.ceil(Number(windowHours)/24);
+        const hardware = await api(`/api/hardware/history?days=${hardwareDays}`);
+        const end=new Date(),start=new Date(end.getTime()-(windowHours==="period"?days*24:Number(windowHours))*3600000);
+        hardwareRows=hardware.data.filter(r=>new Date(r.timestamp)>=start && new Date(r.timestamp)<=end);
+        hardwareTablePage=0;hardwareTable();
+        $("hardware-history-caption").textContent=`ESP32 · ${measurementTime(start)} — ${measurementTime(end)} · ${hardwareRows.length} actual measurements · newest first. Invalid estimates are diagnostic only.`;
         $("pollutant-charts").replaceChildren();
         for (const [field, label] of Object.entries(names)) {
           const box = document.createElement("div");
@@ -274,9 +370,9 @@ async function load() {
           if (["carbon_monoxide","ammonia"].includes(field)) {
             const key=field==="carbon_monoxide"?"co_mg_m3":"nh3_ug_m3";
             const flag=field==="carbon_monoxide"?"co_valid":"nh3_valid";
-            const raw=hardware.data.map(r=>({timestamp:r.timestamp,[field]:r[key],sensor_valid:r[flag]}));
-            // Explicit empty boundaries keep offline/missing intervals visible.
-            const end=new Date(),start=new Date(end.getTime()-days*86400000);
+            const raw=hardwareRows.map(r=>({timestamp:r.timestamp,[field]:r[key],sensor_valid:r[flag],
+              validity_label:hardwareValidity(r,field),device_id:r.device_id}));
+            // Empty boundaries preserve the chosen time window and real gaps.
             raw.unshift({timestamp:start.toISOString(),[field]:null});
             raw.push({timestamp:end.toISOString(),[field]:null});
             chart(raw,svg,field,caption,true,hardware.sample_period_seconds*1500);
@@ -317,8 +413,12 @@ async function load() {
     $("status").classList.add("error");
   } finally {
     loading = false;
+    if(page==="/analytics")$("hardware-window").disabled=false;
   }
 }
+$("hardware-window").onchange = load;
+$("hardware-previous").onclick=()=>{hardwareTablePage--;hardwareTable();};
+$("hardware-next").onclick=()=>{hardwareTablePage++;hardwareTable();};
 $("days").onchange = load;
 $("view").onchange = load;
 load();

@@ -7,7 +7,7 @@ base=os.getenv('DASHBOARD_BASE_URL','http://127.0.0.1:5010')
 out=Path('build/hardware-browser');out.mkdir(parents=True,exist_ok=True)
 with sync_playwright() as p:
     browser=p.chromium.launch(executable_path=os.getenv('CHROMIUM_PATH','/usr/bin/chromium'),args=['--no-sandbox'])
-    page=browser.new_page(viewport={'width':1440,'height':1000})
+    page=browser.new_page(viewport={'width':1440,'height':1000},has_touch=True)
     errors=[];urls=[]
     page.on('pageerror',lambda error:errors.append(str(error)))
     page.on('request',lambda req:urls.append(req.url))
@@ -95,22 +95,80 @@ with sync_playwright() as p:
          'sample_period_seconds':900,'data':[]}
     for minutes,valid,value in ((90,True,1.5),(75,True,1.6),(60,False,0.75),(45,False,0.8),(0,True,1.7)):
         stamp=page.evaluate('(v)=>new Date(v).toISOString()',now-minutes*60000)
-        raw['data'].append(dict(timestamp=stamp,co_mg_m3=value,co_valid=valid,nh3_ug_m3=90.6,nh3_valid=True))
+        raw['data'].append(dict(timestamp=stamp,co_mg_m3=value,co_valid=valid,nh3_ug_m3=90.6,nh3_valid=True,device_id='node1',validity={'co_range_valid':valid}))
     raw['data'].append(dict(timestamp=page.evaluate('(v)=>new Date(v).toISOString()',now+1),co_mg_m3=None,co_valid=False,nh3_ug_m3=None,nh3_valid=False))
     page.route('**/api/hardware/history?*',lambda route:route.fulfill(json=raw))
     page.goto(base+'/analytics')
+    expect(page.locator('#hardware-window')).to_have_value('1')
+    page.select_option('#hardware-window','period')
     co_chart=page.locator('#pollutant-charts .chart-box').filter(has=page.get_by_role('heading',name='CO (mg/m³) · ESP32',exact=True))
     expect(co_chart.locator('circle[data-valid="false"]')).to_have_count(2)
     expect(co_chart.locator('circle[data-valid="true"]')).to_have_count(3)
     expect(co_chart.locator('line[stroke-dasharray="4 3"]')).to_have_count(1)
     expect(co_chart.locator('p')).to_contain_text('diagnostic only — not AQI eligible')
-    expect(co_chart.locator('circle').first.locator('title')).to_contain_text('ESP32 · valid estimate')
+    expect(co_chart.locator('circle').first.locator('title')).to_contain_text('Valid estimate · ESP32')
     expect(co_chart.locator('.chart-time-axis')).to_contain_text(re.compile(r'\d.*(?:am|pm)'))
     # Long offline gap must not be connected (two short segments only).
     expect(co_chart.locator('line[stroke-width="2"]')).to_have_count(2)
     with page.expect_response(lambda r:'/api/hardware/history?days=1' in r.url):
         page.select_option('#days','1')
     expect(co_chart.locator('circle')).to_have_count(5)
+    # Recent view expands sparse 15-minute samples instead of squeezing them
+    # against a 24-hour axis; the same API rows populate exact-value tables.
+    raw['data']=[]
+    for minutes,value,valid in ((90,5.0,True),(45,0.332,False),(30,0.328,False),(15,0.334,True)):
+        stamp=page.evaluate('(v)=>new Date(v).toISOString()',now-minutes*60000)
+        raw['data'].append(dict(timestamp=stamp,co_mg_m3=value,nh3_ug_m3=90.6123456789,
+            co_valid=valid,nh3_valid=True,device_id='node1',validity={'co_range_valid':valid}))
+    page.select_option('#hardware-window','1')
+    expect(co_chart.locator('circle')).to_have_count(3)
+    xs=co_chart.locator('circle').evaluate_all('(dots)=>dots.map(d=>Number(d.getAttribute("cx")))')
+    assert xs[1]-xs[0]>180,'Recent samples remain crowded'
+    expect(page.locator('#pollutant-charts svg')).to_have_count(7)
+    expect(page.locator('#hardware-history-rows tr')).to_have_count(3)
+    expect(page.locator('#hardware-history-rows')).to_contain_text('0.332')
+    expect(page.locator('#hardware-history-rows')).to_contain_text('0.328')
+    expect(page.locator('#hardware-history-rows')).to_contain_text('90.6123456789')
+    expect(page.locator('#hardware-history-rows')).to_contain_text('Outside calibrated range — not AQI eligible')
+    expect(page.locator('#hardware-history-rows')).to_contain_text('Asia/Yangon')
+    expect(page.locator('#hardware-history-rows')).to_contain_text('node1')
+    # Visible tooltip supports pointer, keyboard and touch/click, with exact values.
+    point=co_chart.locator('circle').first
+    point.hover()
+    tooltip=co_chart.locator('[role="tooltip"]')
+    expect(tooltip).to_be_visible()
+    expect(tooltip).to_contain_text('CO 0.332 mg/m³')
+    expect(tooltip).to_contain_text('Outside calibrated range — not AQI eligible · ESP32')
+    expected_time=page.evaluate('(v)=>new Date(v).toLocaleString("en-GB",{timeZone:"Asia/Yangon",dateStyle:"medium",timeStyle:"medium"})',raw['data'][1]['timestamp'])
+    expect(tooltip).to_contain_text(expected_time)
+    point.focus();page.keyboard.press('Escape');expect(tooltip).to_be_hidden()
+    page.keyboard.press('Enter');expect(tooltip).to_be_visible()
+    point.click();expect(tooltip).to_be_visible()
+    point.press('Escape');point.tap();expect(tooltip).to_be_visible()
+    nh3_chart=page.locator('#pollutant-charts .chart-box').filter(has=page.get_by_role('heading',name='NH₃ (µg/m³) · ESP32',exact=True))
+    nh3_chart.locator('circle').first.focus()
+    expect(nh3_chart.locator('[role="tooltip"]')).to_contain_text('90.6123456789 µg/m³')
+    expect(nh3_chart.locator('[role="tooltip"]')).to_contain_text('Valid estimate · ESP32')
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'Analytics mobile overflow'
+    with page.expect_response(lambda r:'/api/hardware/history?days=1' in r.url):
+        page.select_option('#hardware-window','6')
+    expect(page.locator('#hardware-history-rows tr')).to_have_count(4)
+    # Empty recent data stay empty, without invented zeros.
+    raw['data']=[];page.reload()
+    expect(page.locator('#hardware-history-empty')).to_be_visible()
+    expect(co_chart.locator('circle')).to_have_count(0)
+    # Paginated historical tables do not create thousands of mobile DOM rows.
+    raw['data']=[dict(timestamp=page.evaluate('(v)=>new Date(v).toISOString()',now-i*60000),
+        co_mg_m3=None,nh3_ug_m3=None,co_valid=False,nh3_valid=False,device_id='node1') for i in reversed(range(55))]
+    page.select_option('#hardware-window','period')
+    expect(page.locator('#hardware-history-rows tr')).to_have_count(50)
+    expect(page.locator('#hardware-page')).to_have_text('1–50 of 55')
+    expect(page.locator('#hardware-history-rows')).to_contain_text('Unavailable — not AQI eligible')
+    page.locator('#hardware-next').click()
+    expect(page.locator('#hardware-history-rows tr')).to_have_count(5)
+    expect(page.locator('#hardware-page')).to_have_text('51–55 of 55')
+    page.locator('#hardware-previous').click()
+    expect(page.locator('#hardware-history-rows tr')).to_have_count(50)
     page.set_viewport_size({'width':1440,'height':1000})
     # Persisted alert status, diagnostic warning and resolved history render.
     alerts={'aqi_standard':raw['aqi_standard'],'data':[
@@ -138,4 +196,4 @@ with sync_playwright() as p:
     assert all(url.startswith(base+'/') for url in urls),urls
     assert not any('/api/latest' in url or 'vadodara' in url.lower() for url in urls),urls
     browser.close()
-    print('PASS: seven source-labeled cards/charts, empty-chart date axes, daily/period filters, diagnostic valid/invalid hardware, alert statuses, missing hardware, theme/mobile, CPCB rejection, no JS errors.')
+    print('PASS: seven source-labeled cards/charts, empty-chart date axes, daily/period filters, recent hardware views/tooltips/exact history table, diagnostic valid/invalid hardware, alert statuses, missing hardware, theme/mobile, CPCB rejection, no JS errors.')
