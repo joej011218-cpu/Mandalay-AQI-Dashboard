@@ -213,7 +213,19 @@ async function load() {
       $("updated").textContent =
         `${time(r.timestamp)} · hourly rolling calculation · provisional mixed-source estimates`;
       $("pollutants").replaceChildren(
-        ...Object.entries(names).map(([k, n]) => {const m=r.measurements[k];return card(n,fmt(m.value),`${m.unit} · ${m.source} · ${m.status}${m.timestamp?" · "+time(m.timestamp):" · no measurement"}`);}),
+        ...Object.entries(names).map(([k, n]) => {
+          const m=r.measurements[k];
+          let value=m.value,status=m.status;
+          const raw=r.hardware.last_observation;
+          // Display the audited estimate only; never feed it into AQI/history.
+          if(k==="carbon_monoxide" && m.source==="ESP32" && raw && raw.timestamp===m.timestamp){
+            if(typeof raw.co_mg_m3==="number" && Number.isFinite(raw.co_mg_m3)) value=raw.co_mg_m3;
+            if(raw.validity?.co_range_valid===false){
+              status="Invalid — outside calibrated sensor range"+(m.status==="stale"?" · stale":"");
+            }
+          }
+          return card(n,fmt(value),`${m.unit} · ${m.source} · ${status}${m.timestamp?" · "+time(m.timestamp):" · no measurement"}`);
+        }),
       );
       $("status").textContent = `Mandalay monitoring · ${r.aqi_label} · ${r.status}${r.model_stale?" · Open-Meteo stale/missing":""}`;
     }

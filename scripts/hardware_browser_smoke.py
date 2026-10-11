@@ -21,7 +21,9 @@ with sync_playwright() as p:
             if latest['hardware']['status']!='online':
                 for label in ('CO','NH₃'):
                     card=page.locator('#pollutants .card').filter(has=page.get_by_role('heading',name=label,exact=True))
-                    expect(card.locator('strong')).to_have_text('—')
+                    raw=latest['hardware'].get('last_observation')
+                    if label!='CO' or not raw or raw.get('co_mg_m3') is None:
+                        expect(card.locator('strong')).to_have_text('—')
                     expect(card.locator('p')).to_contain_text('ESP32')
             page.locator('summary').click()
             expect(page.locator('#calculation-details tr')).to_have_count(7)
@@ -55,6 +57,29 @@ with sync_playwright() as p:
         card=page.locator('#pollutants .card').filter(has=page.get_by_role('heading',name=label,exact=True))
         expect(card.locator('strong')).to_have_text(value)
         expect(card.locator('p')).to_contain_text('ESP32')
+        expect(card.locator('p')).to_contain_text('valid')
+    # Invalid raw CO remains visible only in the Live card, never in the AQI.
+    original_aqi=page.locator('#aqi').inner_text()
+    co=live['data']['measurements']['carbon_monoxide']
+    co.update(value=None,status='invalid')
+    live['data']['hardware']['last_observation']={
+        'timestamp':co['timestamp'],'co_mg_m3':0.75,'co_valid':False,
+        'validity':{'co_range_valid':False}}
+    page.reload()
+    co_card=page.locator('#pollutants .card').filter(has=page.get_by_role('heading',name='CO',exact=True))
+    expect(co_card.locator('strong')).to_have_text('0.8')
+    expect(co_card.locator('p')).to_contain_text('mg/m³ · ESP32 · Invalid — outside calibrated sensor range')
+    expect(page.locator('#aqi')).to_have_text(original_aqi)
+    assert co['value'] is None and not live['data']['hardware']['last_observation']['co_valid']
+    co['status']='stale';page.reload()
+    expect(co_card.locator('strong')).to_have_text('0.8')
+    expect(co_card.locator('p')).to_contain_text('outside calibrated sensor range · stale')
+    for value in (None,'0.75'):
+        live['data']['hardware']['last_observation']['co_mg_m3']=value
+        page.reload();expect(co_card.locator('strong')).to_have_text('—')
+    # A mismatched observation timestamp must not supply the displayed estimate.
+    live['data']['hardware']['last_observation'].update(co_mg_m3=0.75,timestamp='2000-01-01T00:00:00Z')
+    page.reload();expect(co_card.locator('strong')).to_have_text('—')
     page.unroute('**/api/monitoring/latest')
     page.route('**/api/monitoring/latest',lambda route:route.fulfill(json={'aqi_standard':'US EPA AQI','data':{'us_aqi':500}}))
     page.reload()
