@@ -1,4 +1,4 @@
-"""Real PostgreSQL lock/status and real background-thread integration tests."""
+"""Real PostgreSQL lock/status and background helper integration tests."""
 import logging
 from threading import Event, Thread
 from unittest.mock import Mock
@@ -53,7 +53,7 @@ def test_auth_missing_wrong_valid_and_constant_time(async_app,monkeypatch,endpoi
     assert spy.call_count==4
 
 
-def test_immediate_empty_202_context_commit_and_status(async_app,monkeypatch,caplog):
+def test_background_helper_context_commit_and_status(async_app,monkeypatch,caplog):
     app,threads,release=async_app;started=Event()
     def refresh():
         assert current_app._get_current_object() is app
@@ -63,13 +63,11 @@ def test_immediate_empty_202_context_commit_and_status(async_app,monkeypatch,cap
     monkeypatch.setattr(dashboard,'refresh',refresh)
     client=app.test_client()
     with caplog.at_level(logging.INFO):
-        response=client.post('/api/refresh',headers=AUTH)
-        assert response.status_code==202 and response.data==b''
-        assert response.headers['Location']=='/api/refresh/status'
+        job_id=jobs.enqueue(app)
         assert started.wait(2) and threads[0].is_alive()
         state=client.get('/api/refresh/status',headers=AUTH).json['data']
         assert state['status']=='running' and state['started_at'] and not state['finished_at']
-        assert response.headers['X-Refresh-Job-ID']==state['job_id']
+        assert job_id==state['job_id']
         release.set();wait(threads)
     state=client.get('/api/refresh/status',headers=AUTH).json['data']
     assert state['status']=='succeeded' and state['finished_at'] and state['imported_rows']==1
@@ -86,8 +84,7 @@ def test_background_error_rolls_back_and_redacts_details(async_app,monkeypatch,c
         db.session.flush()
         raise ValueError('test-refresh-secret should never appear in logs or status')
     monkeypatch.setattr(dashboard,'refresh',failure)
-    response=app.test_client().post('/api/refresh',headers=AUTH)
-    assert response.status_code==202 and not response.data
+    jobs.enqueue(app)
     wait(threads)
     state=app.test_client().get('/api/refresh/status',headers=AUTH).json['data']
     assert state['status']=='failed' and state['error']=='ValueError' and state['finished_at']
@@ -98,25 +95,26 @@ def test_background_error_rolls_back_and_redacts_details(async_app,monkeypatch,c
     conn=jobs.acquire();assert conn is not None;jobs.release(conn)
 
 
-def test_separate_app_engines_coalesce_http_and_cli(async_app,monkeypatch):
+def test_separate_app_engines_coalesce_background_and_cli(async_app,monkeypatch):
     app,threads,release=async_app;started=Event();calls=[]
     def refresh():
         calls.append(1);started.set();assert release.wait(5)
         return 24
     monkeypatch.setattr(dashboard,'refresh',refresh)
     other=create_app({'SQLALCHEMY_DATABASE_URI':app.config['SQLALCHEMY_DATABASE_URI'],'TESTING':True})
-    first=app.test_client().post('/api/refresh',headers=AUTH)
+    first=jobs.enqueue(app)
     assert started.wait(2)
-    second=other.test_client().post('/api/refresh',headers=AUTH)
-    assert first.status_code==second.status_code==202 and not second.data
-    assert first.headers['X-Refresh-Job-ID']==second.headers['X-Refresh-Job-ID']
+    with other.app_context():
+        second=jobs.enqueue(other)
+    assert first==second
     cli=other.test_cli_runner().invoke(args=['refresh-data'])
     assert cli.exit_code==0 and 'already active' in cli.output
     assert len(calls)==len(threads)==1
     release.set();wait(threads)
     # A subsequent request after completion may start a new job.
-    third=other.test_client().post('/api/refresh',headers=AUTH)
-    assert third.status_code==202 and third.headers['X-Refresh-Job-ID']!=first.headers['X-Refresh-Job-ID']
+    with other.app_context():
+        third=jobs.enqueue(other)
+    assert third!=first
     wait(threads);assert len(calls)==2
     with other.app_context():db.engine.dispose()
 
@@ -134,12 +132,12 @@ def test_interrupt_detection_and_additive_migration(async_app):
     assert db.session.scalar(select(jobs.RefreshState.status))=='interrupted'
 
 
-def test_thread_launch_failure_is_503_and_releases_lock(async_app,monkeypatch):
+def test_thread_launch_failure_releases_lock(async_app,monkeypatch):
     app,_,_=async_app
     thread=Mock();thread.start.side_effect=RuntimeError('test-refresh-secret')
     monkeypatch.setattr(jobs,'Thread',Mock(return_value=thread))
-    response=app.test_client().post('/api/refresh',headers=AUTH)
-    assert response.status_code==503
+    with pytest.raises(RuntimeError):
+        jobs.enqueue(app)
     assert app.test_client().get('/api/refresh/status',headers=AUTH).json['data']['error']=='LaunchFailed'
     conn=jobs.acquire();assert conn is not None;jobs.release(conn)
 
@@ -156,7 +154,7 @@ def test_real_provider_collection_and_cpcb_complete_in_background(async_app,monk
         hourly_units={**{p:'μg/m³' for p in POLLUTANTS},'us_aqi':'USAQI'},
         timezone='Asia/Yangon',latitude=22.0,longitude=96.1)
     monkeypatch.setattr(dashboard.requests,'get',Mock(return_value=provider))
-    assert app.test_client().post('/api/refresh',headers=AUTH).status_code==202
+    jobs.enqueue(app)
     wait(threads)
     state=app.test_client().get('/api/refresh/status',headers=AUTH).json['data']
     assert state['status']=='succeeded' and state['imported_rows']==24

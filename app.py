@@ -12,6 +12,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.orm import lazyload
+from werkzeug.exceptions import HTTPException
 
 from cpcb import POLLUTANTS, VERSION, calculate
 
@@ -205,7 +206,7 @@ def create_app(config=None):
     if config:
         app.config.update({k:v for k,v in config.items() if k != 'SQLALCHEMY_DATABASE_URI'})
     db.init_app(app)
-    from refresh_jobs import (RefreshState, enqueue, status as refresh_status,
+    from refresh_jobs import (RefreshState, status as refresh_status,
                               cli_refresh, migration_connection, migrate_refresh_schema)
 
     @app.after_request
@@ -306,16 +307,24 @@ def create_app(config=None):
         if denied is not None:
             return denied
         try:
-            job_id = enqueue(app)
-            response = app.response_class(status=202)
-            response.headers['Location'] = '/api/refresh/status'
-            if job_id:
-                response.headers['X-Refresh-Job-ID'] = job_id
-            return response
-        except Exception as error:
+            count = refresh()
+            return jsonify(status='ok', imported=count), 200
+        except (requests.RequestException, KeyError, ValueError, TypeError):
             db.session.rollback()
-            app.logger.error('Unable to launch Mandalay refresh error_type=%s', type(error).__name__)
-            return jsonify(error='Refresh could not be scheduled; verify database and refresh schema'), 503
+            return jsonify(error='Air quality provider unavailable or invalid'), 502
+        except Exception:
+            app.logger.exception('Mandalay refresh failed')
+            db.session.rollback()
+            return jsonify(error='Refresh failed'), 500
+
+    @app.errorhandler(HTTPException)
+    def http_error(error):
+        if request.path == '/api/refresh':
+            response = error.get_response()
+            response.data = app.json.dumps({'error': error.name})
+            response.content_type = 'application/json'
+            return response
+        return error
 
     @app.get('/api/refresh/status')
     def refresh_status_route():

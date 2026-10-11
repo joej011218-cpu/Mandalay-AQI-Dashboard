@@ -101,8 +101,17 @@ def test_refresh_validates_units_coordinates_and_recalculates(application,monkey
     monkeypatch.setenv('REFRESH_TOKEN','test-token')
     client=application.test_client()
     assert client.post('/api/refresh').status_code==401
-    # POST's asynchronous contract and failure status are tested separately;
-    # retain deterministic provider validation coverage here.
+    response=client.post('/api/refresh',headers={'Authorization':'Bearer test-token'})
+    assert response.status_code==200 and response.json=={'status':'ok','imported':24}
+    assert len(response.data)<256
+    assert db.session.query(SourceObservation).count()==24
+    assert db.session.get(CPCBResult,at).cpcb_aqi==75
+    monkeypatch.setattr('app._recalculate',Mock(side_effect=RuntimeError('simulated failure')))
+    payload['hourly']['pm2_5']=[500]*24
+    response=client.post('/api/refresh',headers={'Authorization':'Bearer test-token'})
+    assert response.status_code==500 and response.json=={'error':'Refresh failed'}
+    assert db.session.get(Reading,at).pm2_5==45
+    assert db.session.get(CPCBResult,at).cpcb_aqi==75
     import requests
     fetch.side_effect=requests.Timeout()
     with pytest.raises(requests.Timeout):refresh()
