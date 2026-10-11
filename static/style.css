@@ -526,13 +526,6 @@ summary {
   box-shadow: 0 4px 16px #0004;
 }
 .sensor-tooltip[hidden] { display: none; }
-.hardware-history-wrap { max-height: 460px; overflow: auto; }
-#hardware-history-table { width: 100%; font-variant-numeric: tabular-nums; }
-#hardware-history-table th { position: sticky; top: 0; background: var(--panel); }
-#hardware-history-table td:first-child { min-width: 190px; }
-.hardware-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 12px 0 24px; flex-wrap: wrap; }
-.hardware-pagination button:disabled { opacity: .45; cursor: default; }
 @media (max-width: 600px) {
-  #hardware-history-table { min-width: 760px; }
   .sensor-tooltip { left: 2%; right: 2%; font-size: 12px; }
 }

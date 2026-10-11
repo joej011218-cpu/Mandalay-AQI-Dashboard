@@ -121,28 +121,8 @@
             </select>
           </label>
         </div>
-        <p>ESP32 controls apply only to CO, NH₃ and the measurement table. Open-Meteo charts retain the historical period and aggregation filters.</p>
+        <p>ESP32 controls apply only to CO and NH₃. Open-Meteo charts retain the historical period and aggregation filters.</p>
         <div id="pollutant-charts" class="chart-grid"></div>
-        <h2>ESP32 measurement history</h2>
-        <p id="hardware-history-caption"></p>
-        <div class="panel table-wrap hardware-history-wrap" tabindex="0" aria-label="ESP32 measurement history; scroll horizontally on small screens">
-          <table id="hardware-history-table">
-            <thead><tr><th scope="col">Timestamp · Asia/Yangon</th><th scope="col">CO (mg/m³)</th><th scope="col">NH3 (µg/m³)</th><th scope="col">CO Validity</th><th scope="col">NH3 Validity</th><th scope="col">Device ID</th></tr></thead>
-            <tbody id="hardware-history-rows"></tbody>
-          </table>
-          <p id="hardware-history-empty" hidden>No ESP32 measurements in this view. Missing data are not replaced.</p>
-        </div>
-        <div class="hardware-pagination">
-          <button id="hardware-previous" type="button">Previous</button>
-          <span id="hardware-page" aria-live="polite"></span>
-          <button id="hardware-next" type="button">Next</button>
-        </div>
-        <h2>Period statistics · hourly records</h2>
-        <div id="stats" class="cards"></div>
-        <p>
-          Charts support hourly or daily means; statistics summarize covered hourly records. A mean AQI is
-          descriptive; it is not a new regulatory AQI calculation.
-        </p>
       </section>
       <section id="alerts" hidden>
         <h2>Air quality alerts</h2>

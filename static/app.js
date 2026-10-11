@@ -91,25 +91,6 @@ function hardwareValidity(row, field) {
   return row[field === "carbon_monoxide"?"co_valid":"nh3_valid"] === true
     ? "Valid estimate" : "Invalid — not AQI eligible";
 }
-let hardwareRows=[],hardwareTablePage=0;
-const hardwarePageSize=50;
-function hardwareTable() {
-  const rows=[...hardwareRows].reverse();
-  const start=hardwareTablePage*hardwarePageSize;
-  $("hardware-history-rows").replaceChildren();
-  for (const row of rows.slice(start,start+hardwarePageSize)) {
-    const tr=document.createElement("tr");
-    for (const value of [measurementTime(row.timestamp),exact(row.co_mg_m3),exact(row.nh3_ug_m3),
-      hardwareValidity(row,"carbon_monoxide"),hardwareValidity(row,"ammonia"),row.device_id]) {
-      const td=document.createElement("td");td.textContent=value;tr.append(td);
-    }
-    $("hardware-history-rows").append(tr);
-  }
-  $("hardware-history-empty").hidden=rows.length>0;
-  $("hardware-page").textContent=rows.length?`${start+1}–${Math.min(rows.length,start+hardwarePageSize)} of ${rows.length}`:"0 measurements";
-  $("hardware-previous").disabled=hardwareTablePage===0;
-  $("hardware-next").disabled=start+hardwarePageSize>=rows.length;
-}
 let activeSensorTooltip;
 document.addEventListener("pointerdown",event=>{
   if(activeSensorTooltip && !activeSensorTooltip.box.contains(event.target))activeSensorTooltip.dismiss();
@@ -260,7 +241,7 @@ function chart(
     svg.onpointermove=inspectPoint;svg.onpointerdown=inspectPoint;
     svg.onpointerleave=event=>{if(event.pointerType!=="touch" && !pinned)tooltip.hidden=true;};
   }
-  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Hover, focus or tap a point for its exact measurement. The ESP32 view applies to raw samples; daily view applies to covered-hour charts and statistics." : ""}`;
+  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Hover, focus or tap a point for its exact measurement. The ESP32 view applies to raw samples; daily view applies to covered-hour charts." : ""}`;
 }
 let loading = false;
 async function load() {
@@ -345,9 +326,7 @@ async function load() {
         const hardwareDays=windowHours==="period"?days:Math.ceil(Number(windowHours)/24);
         const hardware = await api(`/api/hardware/history?days=${hardwareDays}`);
         const end=new Date(),start=new Date(end.getTime()-(windowHours==="period"?days*24:Number(windowHours))*3600000);
-        hardwareRows=hardware.data.filter(r=>new Date(r.timestamp)>=start && new Date(r.timestamp)<=end);
-        hardwareTablePage=0;hardwareTable();
-        $("hardware-history-caption").textContent=`ESP32 · ${measurementTime(start)} — ${measurementTime(end)} · ${hardwareRows.length} actual measurements · newest first. Invalid estimates are diagnostic only.`;
+        const hardwareRows=hardware.data.filter(r=>new Date(r.timestamp)>=start && new Date(r.timestamp)<=end);
         $("pollutant-charts").replaceChildren();
         for (const [field, label] of Object.entries(names)) {
           const box = document.createElement("div");
@@ -378,15 +357,6 @@ async function load() {
             chart(raw,svg,field,caption,true,hardware.sample_period_seconds*1500);
           } else chart(h.data, svg, field, caption);
         }
-        $("stats").replaceChildren(
-          ...Object.entries(a.summary).map(([k, v]) =>
-            card(
-              names[k] ? `${names[k]} (${unit(k)}) · ${source(k)}` : "CPCB AQI",
-              fmt(v.mean),
-              `Min ${fmt(v.min)} · Max ${fmt(v.max)} · ${v.count} readings`,
-            ),
-          ),
-        );
         $("status").textContent =
           `${a.observations} Mandalay observations · ${a.unavailable_aqi_count} CPCB AQI unavailable in the selected period`;
       }
@@ -417,8 +387,6 @@ async function load() {
   }
 }
 $("hardware-window").onchange = load;
-$("hardware-previous").onclick=()=>{hardwareTablePage--;hardwareTable();};
-$("hardware-next").onclick=()=>{hardwareTablePage++;hardwareTable();};
 $("days").onchange = load;
 $("view").onchange = load;
 load();

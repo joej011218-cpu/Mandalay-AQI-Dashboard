@@ -31,6 +31,10 @@ with sync_playwright() as p:
             page.locator('#theme').click()
             expect(page.locator('html')).to_have_attribute('data-theme','light')
         if path=='/analytics':
+            expect(page.get_by_role('heading',name='ESP32 measurement history',exact=True)).to_have_count(0)
+            expect(page.get_by_role('heading',name='Period statistics · hourly records',exact=True)).to_have_count(0)
+            expect(page.locator('#hardware-history-table, #hardware-history-caption, .hardware-pagination, #stats')).to_have_count(0)
+            expect(page.locator('#analytics > :last-child')).to_have_attribute('id','pollutant-charts')
             expect(page.locator('#pollutant-charts svg')).to_have_count(7)
             expect(page.locator('#pollutant-charts .chart-time-axis')).to_have_count(7)
             for axis in page.locator('#pollutant-charts .chart-time-axis').all():
@@ -114,7 +118,7 @@ with sync_playwright() as p:
         page.select_option('#days','1')
     expect(co_chart.locator('circle')).to_have_count(5)
     # Recent view expands sparse 15-minute samples instead of squeezing them
-    # against a 24-hour axis; the same API rows populate exact-value tables.
+    # against a 24-hour axis; exact values remain available through tooltips.
     raw['data']=[]
     for minutes,value,valid in ((90,5.0,True),(45,0.332,False),(30,0.328,False),(15,0.334,True)):
         stamp=page.evaluate('(v)=>new Date(v).toISOString()',now-minutes*60000)
@@ -125,13 +129,6 @@ with sync_playwright() as p:
     xs=co_chart.locator('circle').evaluate_all('(dots)=>dots.map(d=>Number(d.getAttribute("cx")))')
     assert xs[1]-xs[0]>180,'Recent samples remain crowded'
     expect(page.locator('#pollutant-charts svg')).to_have_count(7)
-    expect(page.locator('#hardware-history-rows tr')).to_have_count(3)
-    expect(page.locator('#hardware-history-rows')).to_contain_text('0.332')
-    expect(page.locator('#hardware-history-rows')).to_contain_text('0.328')
-    expect(page.locator('#hardware-history-rows')).to_contain_text('90.6123456789')
-    expect(page.locator('#hardware-history-rows')).to_contain_text('Outside calibrated range — not AQI eligible')
-    expect(page.locator('#hardware-history-rows')).to_contain_text('Asia/Yangon')
-    expect(page.locator('#hardware-history-rows')).to_contain_text('node1')
     # Visible tooltip supports pointer, keyboard and touch/click, with exact values.
     point=co_chart.locator('circle').first
     point.hover()
@@ -152,23 +149,12 @@ with sync_playwright() as p:
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'),'Analytics mobile overflow'
     with page.expect_response(lambda r:'/api/hardware/history?days=1' in r.url):
         page.select_option('#hardware-window','6')
-    expect(page.locator('#hardware-history-rows tr')).to_have_count(4)
+    expect(co_chart.locator('circle')).to_have_count(4)
     # Empty recent data stay empty, without invented zeros.
+    saved_observations=raw['data']
     raw['data']=[];page.reload()
-    expect(page.locator('#hardware-history-empty')).to_be_visible()
     expect(co_chart.locator('circle')).to_have_count(0)
-    # Paginated historical tables do not create thousands of mobile DOM rows.
-    raw['data']=[dict(timestamp=page.evaluate('(v)=>new Date(v).toISOString()',now-i*60000),
-        co_mg_m3=None,nh3_ug_m3=None,co_valid=False,nh3_valid=False,device_id='node1') for i in reversed(range(55))]
-    page.select_option('#hardware-window','period')
-    expect(page.locator('#hardware-history-rows tr')).to_have_count(50)
-    expect(page.locator('#hardware-page')).to_have_text('1–50 of 55')
-    expect(page.locator('#hardware-history-rows')).to_contain_text('Unavailable — not AQI eligible')
-    page.locator('#hardware-next').click()
-    expect(page.locator('#hardware-history-rows tr')).to_have_count(5)
-    expect(page.locator('#hardware-page')).to_have_text('51–55 of 55')
-    page.locator('#hardware-previous').click()
-    expect(page.locator('#hardware-history-rows tr')).to_have_count(50)
+    raw['data']=saved_observations
     page.set_viewport_size({'width':1440,'height':1000})
     # Persisted alert status, diagnostic warning and resolved history render.
     alerts={'aqi_standard':raw['aqi_standard'],'data':[
@@ -196,4 +182,4 @@ with sync_playwright() as p:
     assert all(url.startswith(base+'/') for url in urls),urls
     assert not any('/api/latest' in url or 'vadodara' in url.lower() for url in urls),urls
     browser.close()
-    print('PASS: seven source-labeled cards/charts, empty-chart date axes, daily/period filters, recent hardware views/tooltips/exact history table, diagnostic valid/invalid hardware, alert statuses, missing hardware, theme/mobile, CPCB rejection, no JS errors.')
+    print('PASS: seven source-labeled cards/charts, empty-chart date axes, daily/period filters, recent hardware views/exact tooltips, removed history/statistics sections, diagnostic valid/invalid hardware, alert statuses, missing hardware, theme/mobile, CPCB rejection, no JS errors.')
