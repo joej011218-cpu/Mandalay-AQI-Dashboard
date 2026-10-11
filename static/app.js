@@ -26,6 +26,7 @@ $("theme").onclick = () => {
   } catch {}
 };
 const page = location.pathname;
+document.documentElement.dataset.page=page.slice(1)||"live";
 for (const a of document.querySelectorAll("nav a"))
   if (a.getAttribute("href") === page) a.setAttribute("aria-current", "page");
 $("page-title").textContent =
@@ -98,9 +99,8 @@ document.addEventListener("pointerdown",event=>{
 // Yangon has a fixed UTC+06:30 offset; tick times never alter observations.
 const analyticsAxes=new Map();
 function hourlyTicks(start,end,width) {
-  const hour=3600000,offset=6.5*hour,day=24*hour;
-  const dated=Math.floor((start+offset)/day)!==Math.floor((end+offset)/day);
-  const slots=Math.max(1,Math.floor(width/(dated?160:90)));
+  const hour=3600000,offset=6.5*hour;
+  const slots=Math.max(1,Math.floor(width/70));
   const minimum=(end-start)/hour/slots;
   const steps=[1,2,3,6,12,24,48,72,168,336,720,1440,2880,4320,8760];
   const step=steps.find(v=>v>=minimum)||Math.ceil(minimum/24)*24;
@@ -110,17 +110,18 @@ function hourlyTicks(start,end,width) {
   const first=Math.ceil((start+offset)/interval)*interval-offset;
   const timestamps=[];
   for(let at=first;at<=end;at+=interval)timestamps.push(at);
-  return {timestamps,dated,step};
+  return {timestamps,step};
 }
 function analyticsTimeAxis(svg,axis,start,end) {
   axis.replaceChildren();axis.classList.add("hourly-time-axis");
   const rect=svg.getBoundingClientRect();
   const scale=Math.min(rect.width/900,rect.height/260);
   const inset=(rect.width-900*scale)/2;
+  // SVG viewBox scaling must not shrink the Y-axis labels on phones.
+  for(const label of svg.querySelectorAll("text"))label.setAttribute("font-size",Math.min(40,12/Math.max(.1,scale)));
   const ticks=hourlyTicks(start,end,820*scale);
   const formatter=new Intl.DateTimeFormat("en-US",{
-    timeZone:"Asia/Yangon",hour:"numeric",minute:"2-digit",hour12:true,
-    ...(ticks.dated?{month:"short",day:"numeric"}:{}),
+    timeZone:"Asia/Yangon",hour:"numeric",hour12:true,
   });
   axis.dataset.intervalHours=String(ticks.step);
   for(const at of ticks.timestamps) {
@@ -197,6 +198,8 @@ function chart(
       Math.max(3600000, end - start)) *
       820;
   const y = (r) => 225 - (r[field] / max) * 200;
+  const analytics=page==="/analytics";
+  const lineColor=diagnostic?"var(--accent)":"var(--chart-line)";
   const add = (tag, attrs) => {
     const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
@@ -205,7 +208,7 @@ function chart(
   };
   for (let i = 0; i <= 4; i++) {
     const yy = 225 - i * 50;
-    add("line", { x1: 40, x2: 860, y1: yy, y2: yy, stroke: "var(--border)" });
+    add("line", { x1: 40, x2: 860, y1: yy, y2: yy, stroke: "var(--border)", "stroke-opacity": analytics ? .45 : 1 });
     add("text", {
       x: 2,
       y: yy,
@@ -216,22 +219,37 @@ function chart(
   let tooltip,pinned=false;
   const dismiss=()=>{pinned=false;if(tooltip)tooltip.hidden=true;};
   const sensorTargets=[];
-  if (diagnostic) {
+  if (diagnostic || analytics) {
     tooltip=document.createElement("div");tooltip.className="sensor-tooltip";
     tooltip.setAttribute("role","tooltip");tooltip.hidden=true;
     svg.parentElement.append(tooltip);
   }
-  let previous;
+  let previous,segment=[];
+  const drawSegment=()=>{
+    if(segment.length>1)add("polyline",{
+      points:segment.map(r=>`${x(r)},${y(r)}`).join(" "),fill:"none",
+      stroke:diagnostic && !segment[0].sensor_valid?"#E8C547":lineColor,
+      "stroke-dasharray":diagnostic && !segment[0].sensor_valid?"4 3":"none",
+      "stroke-width":2,"stroke-linecap":"round","stroke-linejoin":"round",
+      "vector-effect":"non-scaling-stroke","pointer-events":"none",
+    });
+    segment=[];
+  };
   for (const r of rows) {
     if (r[field] == null) {
+      if(analytics){drawSegment();analyticsTimeAxis(svg,axis,start,end);}
       previous = null;
       continue;
     }
-    if (
+    const connected=(
       previous &&
       new Date(r.timestamp) - new Date(previous.timestamp) <= (diagnostic ? maxGapMs : $("view").value === "daily" ? 129600000 : 5400000) &&
       (!diagnostic || r.sensor_valid === previous.sensor_valid)
-    )
+    );
+    if(analytics){
+      if(!connected)drawSegment();
+      segment.push(r);
+    } else if(connected)
       add("line", {
         x1: x(previous),
         y1: y(previous),
@@ -244,10 +262,10 @@ function chart(
     const dot = add("circle", {
       cx: x(r),
       cy: y(r),
-      r: diagnostic ? 5 : 2,
+      r: diagnostic ? 5 : analytics ? 1.5 : 2,
       stroke: diagnostic ? "var(--bg)" : "none",
       "stroke-width": diagnostic ? 1.5 : 0,
-      fill: diagnostic && !r.sensor_valid ? "#E8C547" : "var(--accent)",
+      fill: diagnostic && !r.sensor_valid ? "#E8C547" : analytics ? lineColor : "var(--accent)",
       "data-valid": diagnostic ? String(r.sensor_valid) : "covered",
     });
     const title = document.createElementNS(
@@ -256,8 +274,9 @@ function chart(
     );
     title.textContent = `${time(r.timestamp)} · ${field === "cpcb_aqi" ? "AQI" : names[field]} ${diagnostic ? estimate(r[field]) : fmt(r[field])}${diagnostic ? " " + unit(field) + " · ESP32 · " + (r.sensor_valid ? "valid estimate" : "invalid estimate — not AQI eligible") : ""}`;
     dot.append(title);
-    if (diagnostic) {
-      const detail=`${names[field]} ${exact(r[field])} ${unit(field)}\n${measurementTime(r.timestamp)}\n${r.validity_label} · ESP32\nDevice: ${r.device_id}`;
+    if (diagnostic || analytics) {
+      const detail=diagnostic?`${names[field]} ${exact(r[field])} ${unit(field)}\n${measurementTime(r.timestamp)}\n${r.validity_label} · ESP32\nDevice: ${r.device_id}`
+        : `${field==="cpcb_aqi"?"CPCB AQI":names[field]} ${exact(r[field])} ${field==="cpcb_aqi"?"AQI":unit(field)}\n${measurementTime(r.timestamp)}\n${field==="cpcb_aqi"?"Provisional calculated estimate · Combined sources":"Modeled observation · Open-Meteo"}`;
       title.textContent=detail;
       dot.classList.add("sensor-point");dot.setAttribute("tabindex","0");
       dot.setAttribute("role","button");dot.setAttribute("aria-label",detail);
@@ -279,7 +298,8 @@ function chart(
     }
     previous = r;
   }
-  if (diagnostic) {
+  if(analytics){drawSegment();analyticsTimeAxis(svg,axis,start,end);}
+  if (diagnostic || analytics) {
     // A small screen scales SVG dots down. Permit nearby pointer/touch inspection
     // in screen pixels without adding fabricated points or changing their times.
     const inspectPoint=event=>{
@@ -300,7 +320,7 @@ function chart(
     svg.onpointermove=inspectPoint;svg.onpointerdown=inspectPoint;
     svg.onpointerleave=event=>{if(event.pointerType!=="touch" && !pinned)tooltip.hidden=true;};
   }
-  caption.textContent = `${time(rows[0].timestamp)} — ${time(rows.at(-1).timestamp)} · ${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Hover, focus or tap a point for its exact measurement. The ESP32 view applies to raw samples; daily view applies to covered-hour charts." : ""}`;
+  caption.textContent = `${analytics?"":time(rows[0].timestamp)+" — "+time(rows.at(-1).timestamp)+" · "}${field === "cpcb_aqi" ? "CPCB AQI" : names[field] + " ("+unit(field)+") · "+source(field)} · ${points.length} ${diagnostic ? "raw sensor" : $("view").value} observations. Gaps are not interpolated.${diagnostic ? " Valid estimates: accent color. Invalid estimates: amber/dashed, diagnostic only — not AQI eligible. Hover, focus or tap a point for its exact measurement. The ESP32 view applies to raw samples; daily view applies to covered-hour charts." : ""}`;
 }
 let loading = false;
 async function load() {
