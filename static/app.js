@@ -37,7 +37,7 @@ $("page-title").textContent =
     "/about": "Mandalay Air Quality — About",
   }[page] || "Mandalay air quality";
 $("live").hidden = page !== "/";
-$("history").hidden = !["/", "/analytics"].includes(page);
+if($("history"))$("history").hidden = page!=="/analytics";
 $("analytics").hidden = page !== "/analytics";
 $("alerts").hidden = page !== "/alerts";
 $("about").hidden = page !== "/about";
@@ -378,7 +378,7 @@ async function load() {
   $("status").classList.remove("error");
   $("status").textContent = "Updating Mandalay observations…";
   try {
-    const days = $("days").value;
+    const days = $("days")?.value;
     if (page === "/") {
       const data = await api("/api/monitoring/latest");
       const r = data.data;
@@ -393,24 +393,6 @@ async function load() {
         `${r.eligible_pollutants.length}/7 eligible pollutants · ${r.status} · ${r.coverage}`;
       $("aqi-reasons").textContent = [...r.reasons,r.missing_pollutants.length?"Missing/insufficient: "+r.missing_pollutants.map(p=>names[p]).join(", "):""].filter(Boolean).join("; ");
       $("hardware-status").textContent=`ESP32: ${r.hardware.status} · ${r.hardware.transport==="webhook"?"EMQX HTTPS delivery":`MQTT subscriber ${r.hardware.mqtt_connected?"connected":"disconnected/unverified"}`}`;
-      $("calculation-details").replaceChildren();
-      for (const [field, detail] of Object.entries(r.pollutant_details)) {
-        const tr = document.createElement("tr");
-        for (const value of [
-          names[field],
-          `${detail.averaging_hours}h`,
-          `${detail.valid_hours_24}/24 · ${detail.valid_hours_window}/${detail.averaging_hours}`,
-          `${fmt(detail.average)} ${detail.unit}`,
-          `${fmt(detail.reported_concentration)} ${detail.unit}`,
-          fmt(detail.subindex),
-          detail.reason || "Eligible",
-        ]) {
-          const td = document.createElement("td");
-          td.textContent = value;
-          tr.append(td);
-        }
-        $("calculation-details").append(tr);
-      }
       $("updated").textContent =
         `${time(r.timestamp)} · hourly rolling calculation · provisional mixed-source estimates`;
       $("pollutants").replaceChildren(
@@ -433,7 +415,7 @@ async function load() {
       );
       $("status").textContent = `Mandalay monitoring · ${r.aqi_label} · ${r.status}${r.model_stale?" · Open-Meteo stale/missing":""}`;
     }
-    if (["/", "/analytics"].includes(page)) {
+    if (page === "/analytics") {
       const h = await api(`/api/monitoring/history?days=${days}&view=${$("view").value}`);
       chart(h.data);
       if (page === "/analytics") {
@@ -510,11 +492,11 @@ async function load() {
   }
 }
 $("hardware-window").onchange = load;
-$("days").onchange = () => {
+if($("days"))$("days").onchange = () => {
   // Selecting a historical range must not retain a narrower recent zoom.
   if(page==="/analytics")$("hardware-window").value="period";
   load();
 };
-$("view").onchange = load;
+if($("view"))$("view").onchange = load;
 load();
 setInterval(load, 300000);

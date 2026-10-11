@@ -27,8 +27,9 @@ with sync_playwright() as p:
                     if not raw or raw.get(key) is None:
                         expect(card.locator('strong')).to_have_text('—')
                     expect(card.locator('p')).to_contain_text('ESP32')
-            page.locator('summary').click()
-            expect(page.locator('#calculation-details tr')).to_have_count(7)
+            expect(page.get_by_text('CPCB averaging and pollutant eligibility',exact=True)).to_have_count(0)
+            expect(page.get_by_role('heading',name='Air quality trends',exact=True)).to_have_count(0)
+            expect(page.locator('#calculation-details, #history, #chart, #days, #view')).to_have_count(0)
             page.locator('#theme').click()
             expect(page.locator('html')).to_have_attribute('data-theme','light')
         if path=='/analytics':

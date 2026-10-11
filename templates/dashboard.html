@@ -56,6 +56,7 @@
           </div>
         </div>
         <div id="pollutants" class="cards"></div>
+        {% if request.path != '/' %}
         <details class="panel calculation-panel">
           <summary>CPCB averaging and pollutant eligibility</summary>
           <div class="table-wrap">
@@ -82,10 +83,12 @@
             Open-Meteo pollutants in µg/m³. Hardware hourly means require sampling coverage.
           </p>
         </details>
+        {% endif %}
       </section>
       <section id="overview" hidden>
         <div id="overview-cards" class="summary-grid"></div>
       </section>
+      {% if request.path != '/' %}
       <section id="history">
         <div class="section-head">
           <h2>Air quality trends</h2>
@@ -115,6 +118,7 @@
           <p id="chart-caption">No observations yet</p>
         </div>
       </section>
+      {% endif %}
       <section id="analytics" hidden>
         <div class="section-head hardware-controls">
           <h2>Pollutant history</h2>
