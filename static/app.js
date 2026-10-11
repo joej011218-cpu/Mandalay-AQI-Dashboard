@@ -98,10 +98,10 @@ document.addEventListener("pointerdown",event=>{
 });
 // Yangon has a fixed UTC+06:30 offset; tick times never alter observations.
 const analyticsAxes=new Map();
-function hourlyTicks(start,end,width) {
+function hourlyTicks(start,end,width,labelWidth=70,minHours=1) {
   const hour=3600000,offset=6.5*hour;
-  const slots=Math.max(1,Math.floor(width/70));
-  const minimum=(end-start)/hour/slots;
+  const slots=Math.max(1,Math.floor(width/labelWidth));
+  const minimum=Math.max(minHours,(end-start)/hour/slots);
   const steps=[1,2,3,6,12,24,48,72,168,336,720,1440,2880,4320,8760];
   const step=steps.find(v=>v>=minimum)||Math.ceil(minimum/24)*24;
   const interval=step*hour;
@@ -119,9 +119,13 @@ function analyticsTimeAxis(svg,axis,start,end) {
   const inset=(rect.width-900*scale)/2;
   // SVG viewBox scaling must not shrink the Y-axis labels on phones.
   for(const label of svg.querySelectorAll("text"))label.setAttribute("font-size",Math.min(40,12/Math.max(.1,scale)));
-  const ticks=hourlyTicks(start,end,820*scale);
+  const period=Number($("days").value);
+  const mode=period===1?"time":period===7?"date-time":"date";
+  const ticks=hourlyTicks(start,end,820*scale,mode==="date-time"?145:mode==="date"?80:70,mode==="time"?1:mode==="date-time"?12:24);
   const formatter=new Intl.DateTimeFormat("en-US",{
-    timeZone:"Asia/Yangon",hour:"numeric",hour12:true,
+    timeZone:"Asia/Yangon",
+    ...(mode!=="time"?{month:"short",day:"numeric"}:{}),
+    ...(mode!=="date"?{hour:"numeric",hour12:true}:{}),
   });
   axis.dataset.intervalHours=String(ticks.step);
   for(const at of ticks.timestamps) {

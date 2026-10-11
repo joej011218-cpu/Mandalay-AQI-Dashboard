@@ -168,8 +168,9 @@ with sync_playwright() as p:
         assert str(value) in titles[index] and 'Outside calibrated range' in titles[index]
         expected=page.evaluate('(v)=>new Date(v).toLocaleString("en-GB",{timeZone:"Asia/Yangon",dateStyle:"medium",timeStyle:"medium"})',raw['data'][index]['timestamp'])
         assert expected in titles[index]
-    # Every selected range keeps raw sensor observations and time-only axes.
-    for period in ('1','7','30'):
+    assert page.locator('#days option').all_text_contents()==['24H','7D','20D']
+    # Every selected range keeps raw observations and adaptive calendar axes.
+    for period in ('1','7','20'):
         with page.expect_response(lambda r:'/api/hardware/history?days='+period in r.url):
             page.select_option('#days',period)
         expect(page.locator('#hardware-window')).to_have_value('period')
@@ -177,7 +178,18 @@ with sync_playwright() as p:
         expect(nh3_chart.locator('circle[data-valid="true"]')).to_have_count(4)
         expect(page.locator('.hourly-time-axis')).to_have_count(8)
         labels=page.locator('.hourly-time-axis > span').all_text_contents()
-        assert labels and all(re.fullmatch(r'\d{1,2} (AM|PM)',label) for label in labels),labels
+        pattern=r'\d{1,2} (AM|PM)' if period=='1' else r'[A-Z][a-z]{2} \d{1,2}, \d{1,2} (AM|PM)' if period=='7' else r'[A-Z][a-z]{2} \d{1,2}'
+        assert labels and all(re.fullmatch(pattern,label) for label in labels),labels
+        for width in (390,1440):
+            page.set_viewport_size({'width':width,'height':1000})
+            page.wait_for_timeout(100)
+            boxes=page.locator('.hourly-time-axis').evaluate_all('(axes)=>axes.map(a=>[...a.querySelectorAll("span > span")].map(l=>{const r=l.getBoundingClientRect();return {left:r.left,right:r.right}}))')
+            assert all(all(row[i]['right']<=row[i+1]['left']+1 for i in range(len(row)-1)) for row in boxes)
+        stamps=page.locator('.hourly-time-axis > span').evaluate_all('(ticks)=>ticks.map(t=>t.dataset.timestamp)')
+        for stamp in stamps:
+            local=page.evaluate('(v)=>new Date(Date.parse(v)+6.5*3600000).toISOString()',stamp)
+            assert local[14:19]=='00:00',local
+            if period=='20':assert local[11:13]=='00',local
         co_chart.locator('circle').first.focus()
         expect(co_chart.locator('[role="tooltip"]')).to_contain_text('0.332 mg/m³')
         expect(co_chart.locator('[role="tooltip"]')).to_contain_text('Outside calibrated range — not AQI eligible · ESP32')
@@ -193,6 +205,7 @@ with sync_playwright() as p:
     expect(co_chart.locator('circle')).to_have_count(0)
     raw['data']=saved_observations
     page.set_viewport_size({'width':1440,'height':1000})
+    page.select_option("#days","1")
     # Clock ticks use UTC+06:30 boundaries, independent of sample minutes.
     aligned=page.evaluate('()=>hourlyTicks(Date.parse("2026-10-11T12:39:00+06:30"),Date.parse("2026-10-11T18:39:00+06:30"),900)')
     assert aligned['step']==1 and len(aligned['timestamps'])==6

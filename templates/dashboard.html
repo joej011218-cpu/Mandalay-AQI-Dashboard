@@ -92,10 +92,16 @@
           <label
             >Period
             <select id="days">
+              {% if request.path == '/analytics' %}
+              <option value="1">24H</option>
+              <option value="7" selected>7D</option>
+              <option value="20">20D</option>
+              {% else %}
               <option value="1">24 hours</option>
               <option value="7" selected>7 days</option>
               <option value="30">30 days</option>
               <option value="366">1 year</option>
+              {% endif %}
             </select><select id="view" aria-label="Aggregation view"><option value="hourly">Hourly</option><option value="daily">Daily means</option></select></label
           >
         </div>
