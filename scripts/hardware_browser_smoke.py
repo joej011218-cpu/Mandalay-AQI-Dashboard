@@ -104,8 +104,7 @@ with sync_playwright() as p:
     raw['data'].append(dict(timestamp=page.evaluate('(v)=>new Date(v).toISOString()',now+1),co_mg_m3=None,co_valid=False,nh3_ug_m3=None,nh3_valid=False))
     page.route('**/api/hardware/history?*',lambda route:route.fulfill(json=raw))
     page.goto(base+'/analytics')
-    expect(page.locator('#hardware-window')).to_have_value('1')
-    page.select_option('#hardware-window','period')
+    expect(page.locator('#hardware-window')).to_have_value('period')
     co_chart=page.locator('#pollutant-charts .chart-box').filter(has=page.get_by_role('heading',name='CO (mg/m³) · ESP32',exact=True))
     expect(co_chart.locator('circle[data-valid="false"]')).to_have_count(2)
     expect(co_chart.locator('circle[data-valid="true"]')).to_have_count(3)
@@ -151,6 +150,24 @@ with sync_playwright() as p:
     with page.expect_response(lambda r:'/api/hardware/history?days=1' in r.url):
         page.select_option('#hardware-window','6')
     expect(co_chart.locator('circle')).to_have_count(4)
+    # Historical period selection restores the full range after an explicit zoom.
+    with page.expect_response(lambda r:'/api/hardware/history?days=7' in r.url):
+        page.select_option('#days','7')
+    expect(page.locator('#hardware-window')).to_have_value('period')
+    expect(co_chart.locator('circle')).to_have_count(4)
+    # Four earlier 15-minute observations are never trimmed to the latest hour.
+    earlier=page.evaluate('(v)=>(Math.floor((v+6.5*3600000)/3600000)-3)*3600000-6.5*3600000+11*60000',now)
+    raw['data']=[dict(timestamp=page.evaluate('(v)=>new Date(v).toISOString()',earlier+i*15*60000),
+        co_mg_m3=value,nh3_ug_m3=90.6+i,co_valid=False,nh3_valid=True,device_id='node1',
+        validity={'co_range_valid':False}) for i,value in enumerate((0.332,0.328,0.331,0.329))]
+    page.reload()
+    expect(co_chart.locator('circle[data-valid="false"]')).to_have_count(4)
+    expect(nh3_chart.locator('circle[data-valid="true"]')).to_have_count(4)
+    titles=co_chart.locator('circle title').all_text_contents()
+    for index,value in enumerate((0.332,0.328,0.331,0.329)):
+        assert str(value) in titles[index] and 'Outside calibrated range' in titles[index]
+        expected=page.evaluate('(v)=>new Date(v).toLocaleString("en-GB",{timeZone:"Asia/Yangon",dateStyle:"medium",timeStyle:"medium"})',raw['data'][index]['timestamp'])
+        assert expected in titles[index]
     # Empty recent data stay empty, without invented zeros.
     saved_observations=raw['data']
     raw['data']=[];page.reload()

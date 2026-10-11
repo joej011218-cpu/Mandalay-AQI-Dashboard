@@ -191,3 +191,19 @@ def test_equal_timestamps_use_latest_received_validity(hw_app):
     assert live['hardware']['last_observation']['message_id']=='same-time-invalid'
     assert live['hardware']['last_observation']['co_mg_m3']==0.75
     assert live['measurements']['carbon_monoxide']['status']=='invalid'
+
+
+def test_history_returns_every_original_quarter_hour_estimate(hw_app):
+    now=datetime.now(timezone.utc);first=current_hour()-timedelta(hours=3)
+    values=(0.332,0.328,0.331,0.329)
+    for index,value in enumerate(values):
+        stamp=first+timedelta(minutes=11+index*15)
+        ingest(payload(stamp,message_id=f'quarter-hour-{index}',co_mg_m3=value,
+                       co_range_valid=False,nh3_ug_m3=90.6+index),now)
+    result=hw_app.test_client().get('/api/hardware/history?days=1').json['data']
+    assert len(result)==4
+    assert [r['co_mg_m3'] for r in result]==list(values)
+    assert [datetime.fromisoformat(r['timestamp']).minute for r in result]==[11,26,41,56]
+    assert all(not r['co_valid'] and r['validity']['co_range_valid'] is False for r in result)
+    assert [r['nh3_ug_m3'] for r in result]==[90.6+i for i in range(4)]
+    assert db.session.scalar(select(func.count()).select_from(HardwareObservation))==4

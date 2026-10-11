@@ -446,7 +446,11 @@ async function load() {
   }
 }
 $("hardware-window").onchange = load;
-$("days").onchange = load;
+$("days").onchange = () => {
+  // Selecting a historical range must not retain a narrower recent zoom.
+  if(page==="/analytics")$("hardware-window").value="period";
+  load();
+};
 $("view").onchange = load;
 load();
 setInterval(load, 300000);
